@@ -24,6 +24,15 @@ app.use('/api/polla', pollaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/partidos', partidosRouter);
 
+// Manejo de errores de subida de archivos (multer) y otros errores no controlados
+app.use((err, req, res, next) => {
+    if (err) {
+        console.error('Error no controlado:', err.message);
+        return res.status(400).json({ success: false, error: err.message || 'Error procesando la solicitud' });
+    }
+    next();
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
     console.log(`Servidor de la Polla Mundialista corriendo en http://localhost:${PORT}`);

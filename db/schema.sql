@@ -59,6 +59,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_usuario_partido_activo
     ON transacciones (usuario_id, partido_id)
     WHERE estado_pago <> 'RECHAZADO';
 
+-- Comprobante de pago (foto) para transferencias manuales revisadas por el admin
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_imagen BYTEA;
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_mime VARCHAR(50);
+
 -- ============================================================
 -- Tabla: pronosticos
 -- ============================================================

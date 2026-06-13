@@ -11,7 +11,8 @@ router.use(adminAuth);
 router.get('/pendientes', async (req, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT t.id, u.nombre, u.correo, u.celular, t.valor_pagado, t.metodo, t.estado_pago, t.fecha_creacion
+            `SELECT t.id, u.nombre, u.correo, u.celular, t.valor_pagado, t.metodo, t.estado_pago, t.fecha_creacion,
+                    (t.comprobante_imagen IS NOT NULL) AS tiene_comprobante
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              ORDER BY t.fecha_creacion DESC`
@@ -26,11 +27,34 @@ router.get('/pendientes', async (req, res) => {
             metodo: t.metodo,
             estado: t.estado_pago,
             fecha: new Date(t.fecha_creacion).getTime(),
+            tieneComprobante: t.tiene_comprobante,
         }));
 
         return res.json({ success: true, transacciones });
     } catch (err) {
         console.error('Error en /admin/pendientes:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/comprobante/:id - devuelve la imagen del comprobante de pago
+router.get('/comprobante/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const { rows } = await pool.query(
+            'SELECT comprobante_imagen, comprobante_mime FROM transacciones WHERE id = $1',
+            [id]
+        );
+
+        if (rows.length === 0 || !rows[0].comprobante_imagen) {
+            return res.status(404).json({ success: false, error: 'Comprobante no encontrado' });
+        }
+
+        res.set('Content-Type', rows[0].comprobante_mime || 'image/jpeg');
+        return res.send(rows[0].comprobante_imagen);
+    } catch (err) {
+        console.error('Error en /admin/comprobante:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
