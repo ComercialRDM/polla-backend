@@ -63,6 +63,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_usuario_partido_activo
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_imagen BYTEA;
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_mime VARCHAR(50);
 
+-- Sistema de referidos: token de acceso de quien comparte el link, y si ya se otorgó el bono al referidor
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referido_por_token UUID;
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referido_bono_otorgado BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: pronosticos
 -- ============================================================

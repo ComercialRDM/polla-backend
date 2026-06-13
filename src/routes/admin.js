@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
+const { enviarCorreoRecompra } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -134,6 +135,58 @@ router.post('/rechazar', async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('Error en /admin/rechazar:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/notificar-recompra
+// Envía un correo a todos los usuarios con bono APROBADO en partido_id_origen,
+// invitándolos a comprar su bono para el siguiente partido (partido_id_destino).
+router.post('/notificar-recompra', async (req, res) => {
+    const { partido_id_origen, partido_id_destino } = req.body;
+
+    if (!partido_id_origen || !partido_id_destino) {
+        return res.status(400).json({ success: false, error: 'Faltan campos: partido_id_origen, partido_id_destino' });
+    }
+
+    try {
+        const { rows: destinoRows } = await pool.query(
+            'SELECT equipo_local, equipo_visitante FROM partidos WHERE id = $1',
+            [partido_id_destino]
+        );
+        if (destinoRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido destino no encontrado' });
+        }
+        const { equipo_local, equipo_visitante } = destinoRows[0];
+
+        const { rows: usuarios } = await pool.query(
+            `SELECT DISTINCT u.nombre, u.correo
+             FROM usuarios u
+             JOIN transacciones t ON t.usuario_id = u.id
+             WHERE t.partido_id = $1 AND t.estado_pago = 'APROBADO'`,
+            [partido_id_origen]
+        );
+
+        const linkCompra = `${process.env.FRONTEND_URL}/comprar`;
+        let enviados = 0;
+        for (const usuario of usuarios) {
+            try {
+                await enviarCorreoRecompra({
+                    destinatario: usuario.correo,
+                    nombre: usuario.nombre,
+                    equipoLocal: equipo_local,
+                    equipoVisitante: equipo_visitante,
+                    linkCompra,
+                });
+                enviados += 1;
+            } catch (err) {
+                console.error(`Error enviando correo de recompra a ${usuario.correo}:`, err.message);
+            }
+        }
+
+        return res.json({ success: true, enviados, total: usuarios.length });
+    } catch (err) {
+        console.error('Error en /admin/notificar-recompra:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

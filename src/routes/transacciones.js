@@ -6,6 +6,12 @@ const { crearPaymentLink } = require('../services/wompiService');
 
 const router = express.Router();
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function tokenReferidoValido(ref) {
+    return typeof ref === 'string' && UUID_REGEX.test(ref) ? ref : null;
+}
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -19,7 +25,8 @@ const upload = multer({
 
 // POST /api/transacciones/crear-link
 router.post('/crear-link', async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref } = req.body;
+    const referidoPorToken = tokenReferidoValido(ref);
 
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
@@ -75,10 +82,10 @@ router.post('/crear-link', async (req, res) => {
 
         // Insertar transacción PENDIENTE
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago)
-             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE')
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token)
+             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE', $6)
              RETURNING *`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken]
         );
         const transaccion = transaccionRows[0];
 
@@ -122,7 +129,8 @@ router.post('/crear-link', async (req, res) => {
 // Registra una transacción PENDIENTE pagada por transferencia bancaria, con foto del comprobante.
 // El admin la revisa y aprueba/rechaza manualmente desde el panel.
 router.post('/crear-transferencia', upload.single('comprobante'), async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref } = req.body;
+    const referidoPorToken = tokenReferidoValido(ref);
 
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
@@ -181,10 +189,10 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
 
         // Insertar transacción PENDIENTE con el comprobante adjunto
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime)
-             VALUES ($1, $2, 'Transferencia', $3, $4, $5, 'PENDIENTE', $6, $7)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token)
+             VALUES ($1, $2, 'Transferencia', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
              RETURNING id`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken]
         );
 
         await client.query('COMMIT');

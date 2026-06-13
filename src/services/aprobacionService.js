@@ -27,7 +27,27 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
             return { ok: false, motivo: 'transaccion_no_pendiente' };
         }
 
-        const transaccion = rows[0];
+        let transaccion = rows[0];
+
+        // Recompensa por referido: si esta compra vino de un link de referido, ambos ganan 1 intento extra
+        if (transaccion.referido_por_token && !transaccion.referido_bono_otorgado) {
+            const { rows: referidorRows } = await client.query(
+                `UPDATE transacciones SET intentos_totales = intentos_totales + 1
+                 WHERE token_acceso = $1 AND estado_pago = 'APROBADO'
+                 RETURNING id`,
+                [transaccion.referido_por_token]
+            );
+
+            if (referidorRows.length > 0) {
+                const { rows: actualizada } = await client.query(
+                    `UPDATE transacciones SET intentos_totales = intentos_totales + 1, referido_bono_otorgado = TRUE
+                     WHERE id = $1
+                     RETURNING *`,
+                    [transaccion.id]
+                );
+                transaccion = actualizada[0];
+            }
+        }
 
         const { rows: usuarioRows } = await client.query('SELECT * FROM usuarios WHERE id = $1', [transaccion.usuario_id]);
         const usuario = usuarioRows[0];

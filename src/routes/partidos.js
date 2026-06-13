@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { calcularRanking } = require('../services/rankingService');
+const { calcularRanking, obtenerResumenPublico } = require('../services/rankingService');
 
 const router = express.Router();
 
@@ -32,6 +32,22 @@ router.get('/:id/ranking', async (req, res) => {
         return res.json({ success: true, ...ranking });
     } catch (err) {
         console.error('Error en /partidos/:id/ranking:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/partidos/:id/resumen-publico - contador de participantes y top parcial, sin necesidad de login
+router.get('/:id/resumen-publico', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const resumen = await obtenerResumenPublico(id);
+        if (!resumen) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        return res.json({ success: true, ...resumen });
+    } catch (err) {
+        console.error('Error en /partidos/:id/resumen-publico:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

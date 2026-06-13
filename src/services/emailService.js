@@ -78,4 +78,33 @@ async function enviarCorreoNotificacionVoto({ nombre, correo, equipoLocal, equip
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto };
+/**
+ * Notifica a un participante de un partido anterior que ya puede comprar su bono
+ * para el siguiente partido de la Selección Colombia.
+ * @param {{ destinatario: string, nombre: string, equipoLocal: string, equipoVisitante: string, linkCompra: string }} datos
+ */
+async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoVisitante, linkCompra }) {
+    const transporter = crearTransporter();
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #f59e0b;">¡${nombre}, llegó el siguiente partido de Colombia! 🇨🇴</h1>
+        <p><strong>${equipoLocal} vs ${equipoVisitante}</strong> ya está disponible en la Polla Mundialista de La Retoucherie de Manuela.</p>
+        <p>Compra tu nuevo Bono Digital, recibe saldo para tus servicios de belleza y participa prediciendo el marcador para ganar premios.</p>
+        <p style="text-align: center; margin: 30px 0;">
+            <a href="${linkCompra}" style="background: linear-gradient(90deg, #f59e0b, #f97316); color: #18181b; font-weight: bold; padding: 14px 28px; border-radius: 8px; text-decoration: none; display: inline-block;">
+                Comprar mi bono
+            </a>
+        </p>
+        <p style="font-size: 12px; color: #71717a;">Si el botón no funciona, copia y pega este link en tu navegador: ${linkCompra}</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `¡${equipoLocal} vs ${equipoVisitante}! Compra tu bono y participa 🇨🇴`,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra };
