@@ -35,6 +35,28 @@ router.get('/pendientes', async (req, res) => {
     }
 });
 
+// POST /api/admin/partidos
+router.post('/partidos', async (req, res) => {
+    const { equipo_local, equipo_visitante, fecha_hora_inicio } = req.body;
+
+    if (!equipo_local || !equipo_visitante || !fecha_hora_inicio) {
+        return res.status(400).json({ success: false, error: 'Faltan campos: equipo_local, equipo_visitante, fecha_hora_inicio' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio)
+             VALUES ($1, $2, $3)
+             RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, estado`,
+            [equipo_local, equipo_visitante, fecha_hora_inicio]
+        );
+        return res.json({ success: true, partido: rows[0] });
+    } catch (err) {
+        console.error('Error en /admin/partidos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // POST /api/admin/aprobar
 router.post('/aprobar', async (req, res) => {
     const { transaccion_id } = req.body;
