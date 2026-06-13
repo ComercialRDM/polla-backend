@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -160,6 +161,24 @@ router.post('/votar', async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        try {
+            const { rows: usuarioRows } = await pool.query(
+                'SELECT nombre, correo FROM usuarios WHERE id = $1',
+                [transaccion.usuario_id]
+            );
+            const usuario = usuarioRows[0];
+            await enviarCorreoNotificacionVoto({
+                nombre: usuario.nombre,
+                correo: usuario.correo,
+                equipoLocal: partido.equipo_local,
+                equipoVisitante: partido.equipo_visitante,
+                marcadores,
+                fecha: new Date(),
+            });
+        } catch (errCorreo) {
+            console.error('Error al enviar correo de notificación de voto:', errCorreo);
+        }
 
         return res.json({
             success: true,
