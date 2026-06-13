@@ -24,8 +24,14 @@ CREATE TABLE IF NOT EXISTS partidos (
     equipo_visitante    VARCHAR(100) NOT NULL,
     fecha_hora_inicio   TIMESTAMPTZ NOT NULL,
     estado              VARCHAR(20) NOT NULL DEFAULT 'activo'
-        CHECK (estado IN ('activo', 'cerrado'))
+        CHECK (estado IN ('activo', 'cerrado')),
+    goles_local         INTEGER NOT NULL DEFAULT 0,
+    goles_visitante     INTEGER NOT NULL DEFAULT 0
 );
+
+-- Marcador en vivo: agrega las columnas si la tabla ya existía sin ellas
+ALTER TABLE partidos ADD COLUMN IF NOT EXISTS goles_local INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE partidos ADD COLUMN IF NOT EXISTS goles_visitante INTEGER NOT NULL DEFAULT 0;
 
 -- ============================================================
 -- Tabla: transacciones
@@ -65,6 +71,10 @@ CREATE TABLE IF NOT EXISTS pronosticos (
     goles_visitante INTEGER NOT NULL CHECK (goles_visitante >= 0),
     fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Índices para que el cálculo del ranking en vivo (marcador exacto + desempate por fecha) sea instantáneo
+CREATE INDEX IF NOT EXISTS idx_pronosticos_marcador ON pronosticos (partido_id, goles_local, goles_visitante);
+CREATE INDEX IF NOT EXISTS idx_pronosticos_fecha_registro ON pronosticos (fecha_registro);
 
 -- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
