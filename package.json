@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "db:local": "node scripts/start-db.js"
+    "db:local": "node scripts/start-db.js",
+    "db:migrate": "node db/migrate.js"
   },
   "dependencies": {
     "@img/sharp-wasm32": "^0.35.1",
