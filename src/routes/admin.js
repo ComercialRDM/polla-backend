@@ -57,6 +57,25 @@ router.post('/partidos', async (req, res) => {
     }
 });
 
+// DELETE /api/admin/partidos/:id
+router.delete('/partidos/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const { rows } = await pool.query('DELETE FROM partidos WHERE id = $1 RETURNING id', [id]);
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        return res.json({ success: true });
+    } catch (err) {
+        if (err.code === '23503') {
+            return res.status(409).json({ success: false, error: 'No se puede eliminar: el partido tiene transacciones o pronósticos asociados' });
+        }
+        console.error('Error en /admin/partidos delete:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // POST /api/admin/aprobar
 router.post('/aprobar', async (req, res) => {
     const { transaccion_id } = req.body;
