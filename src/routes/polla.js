@@ -76,11 +76,11 @@ router.get('/info', async (req, res) => {
     }
 });
 
-// GET /api/polla/verificar-acceso?contacto=&partido_id=
+// GET /api/polla/verificar-acceso?contacto=
 router.get('/verificar-acceso', async (req, res) => {
-    const { contacto, partido_id } = req.query;
+    const { contacto } = req.query;
 
-    if (!contacto || !partido_id) {
+    if (!contacto) {
         return res.status(400).json({ acceso: false, error: 'Faltan parámetros' });
     }
 
@@ -90,10 +90,10 @@ router.get('/verificar-acceso', async (req, res) => {
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE (u.correo = $1 OR u.celular = $1)
-               AND t.partido_id = $2
                AND t.estado_pago = 'APROBADO'
+             ORDER BY t.id DESC
              LIMIT 1`,
-            [contacto, partido_id]
+            [contacto]
         );
 
         if (rows.length === 0) {
