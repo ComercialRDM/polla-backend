@@ -1,11 +1,18 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../db');
+const { enviarMensajeManyChat } = require('../services/manychatService');
 
 const router = express.Router();
 
+const RESET_CODE_VIGENCIA_MIN = 10;
+
 function normalizarCelular(celular) {
     return String(celular || '').replace(/[^0-9+]/g, '').trim();
+}
+
+function generarCodigoOTP() {
+    return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 // POST /api/auth/registro - crea la cuenta (celular + contraseña + nombre) o reclama una cuenta existente
@@ -95,6 +102,86 @@ router.post('/login', async (req, res) => {
         return res.json({ success: true, usuario });
     } catch (err) {
         console.error('Error en /auth/login:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/auth/solicitar-reset - genera un código OTP y lo envía por WhatsApp (ManyChat)
+router.post('/solicitar-reset', async (req, res) => {
+    const { celular } = req.body;
+    const celularNormalizado = normalizarCelular(celular);
+
+    if (!celularNormalizado) {
+        return res.status(400).json({ success: false, error: 'Ingresa tu número de celular' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, celular FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1 AND password_hash IS NOT NULL`,
+            [celularNormalizado]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'No encontramos una cuenta con este celular.' });
+        }
+
+        const codigo = generarCodigoOTP();
+        await pool.query(
+            `UPDATE usuarios SET reset_code = $1, reset_code_expira = now() + interval '${RESET_CODE_VIGENCIA_MIN} minutes' WHERE id = $2`,
+            [codigo, rows[0].id]
+        );
+
+        await enviarMensajeManyChat({
+            celular: rows[0].celular,
+            mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
+        });
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /auth/solicitar-reset:', err);
+        return res.status(500).json({ success: false, error: 'No se pudo enviar el código. Intenta de nuevo.' });
+    }
+});
+
+// POST /api/auth/restablecer-password - valida el código OTP y guarda la nueva contraseña
+router.post('/restablecer-password', async (req, res) => {
+    const { celular, codigo, nueva_password } = req.body;
+    const celularNormalizado = normalizarCelular(celular);
+
+    if (!celularNormalizado || !codigo) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+    if (!nueva_password || nueva_password.length < 6) {
+        return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, reset_code, reset_code_expira FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            [celularNormalizado]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'No encontramos una cuenta con este celular.' });
+        }
+
+        const usuario = rows[0];
+        if (!usuario.reset_code || usuario.reset_code !== String(codigo).trim()) {
+            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
+        }
+        if (!usuario.reset_code_expira || new Date(usuario.reset_code_expira) < new Date()) {
+            return res.status(400).json({ success: false, error: 'El código venció. Solicita uno nuevo.' });
+        }
+
+        const passwordHash = await bcrypt.hash(nueva_password, 10);
+        await pool.query(
+            `UPDATE usuarios SET password_hash = $1, reset_code = NULL, reset_code_expira = NULL WHERE id = $2`,
+            [passwordHash, usuario.id]
+        );
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /auth/restablecer-password:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

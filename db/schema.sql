@@ -22,6 +22,10 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL 
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE usuarios ALTER COLUMN correo DROP NOT NULL;
 
+-- Código para reestablecer contraseña (enviado por WhatsApp vía ManyChat)
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code VARCHAR(6);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code_expira TIMESTAMPTZ;
+
 -- ============================================================
 -- Tabla: partidos
 -- ============================================================

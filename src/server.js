@@ -55,6 +55,13 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de password_hash:', err.message);
     }
 
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code VARCHAR(6)`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code_expira TIMESTAMPTZ`);
+    } catch (err) {
+        console.error('Error aplicando migración de reset_code:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });
