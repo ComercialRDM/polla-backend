@@ -37,8 +37,7 @@ const partidos = [
     { equipo_local: 'Canada', equipo_visitante: 'Bosnia y Herzegovina', fecha_hora_inicio: '2026-06-12T14:00:00-05:00' }, // Grupo B
     { equipo_local: 'Estados Unidos', equipo_visitante: 'Paraguay', fecha_hora_inicio: '2026-06-12T21:00:00-05:00' }, // Grupo D
 
-    // --- Jun 13 (horas aproximadas para 5 y 6, partidos ya jugados) ---
-    { equipo_local: 'Catar', equipo_visitante: 'Suiza', fecha_hora_inicio: '2026-06-13T12:00:00-05:00' }, // Grupo B
+    // --- Jun 13 (horas aproximadas para 6, partido ya jugado; Catar vs Suiza ya existe, no se incluye) ---
     { equipo_local: 'Brasil', equipo_visitante: 'Marruecos', fecha_hora_inicio: '2026-06-13T15:00:00-05:00' }, // Grupo C
     { equipo_local: 'Haiti', equipo_visitante: 'Escocia', fecha_hora_inicio: '2026-06-13T20:00:00-05:00' }, // Grupo C
     { equipo_local: 'Australia', equipo_visitante: 'Turquia', fecha_hora_inicio: '2026-06-13T23:00:00-05:00' }, // Grupo D
