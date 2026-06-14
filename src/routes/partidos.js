@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { calcularRanking, obtenerResumenPublico, obtenerPronosticosPublicos } = require('../services/rankingService');
 const { getOrSet } = require('../utils/cache');
+const { suscribir, desuscribir } = require('../utils/sse');
 
 const router = express.Router();
 
@@ -74,6 +75,29 @@ router.get('/:id/pronosticos-publicos', async (req, res) => {
         console.error('Error en /partidos/:id/pronosticos-publicos:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
+});
+
+// GET /api/partidos/:id/eventos - Server-Sent Events: avisa al frontend cuando cambia
+// el ranking/marcador del partido, para refrescar sin esperar al siguiente polling
+router.get('/:id/eventos', (req, res) => {
+    const { id } = req.params;
+
+    res.set({
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+    });
+    res.flushHeaders();
+    res.write(': conectado\n\n');
+
+    suscribir(id, res);
+
+    const keepAlive = setInterval(() => res.write(': ping\n\n'), 30000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        desuscribir(id, res);
+    });
 });
 
 module.exports = router;

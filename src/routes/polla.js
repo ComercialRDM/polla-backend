@@ -3,6 +3,7 @@ const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
 const { invalidate } = require('../utils/cache');
+const { notificar } = require('../utils/sse');
 
 const router = express.Router();
 
@@ -232,6 +233,7 @@ router.post('/votar', async (req, res) => {
         invalidate(`ranking:${partido_id}`);
         invalidate(`resumen:${partido_id}`);
         invalidate(`pronosticos:${partido_id}`);
+        notificar(partido_id);
 
         try {
             const { rows: usuarioRows } = await pool.query(

@@ -4,6 +4,7 @@ const adminAuth = require('../middleware/adminAuth');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra } = require('../services/emailService');
 const { invalidate } = require('../utils/cache');
+const { notificar } = require('../utils/sse');
 
 const router = express.Router();
 
@@ -119,6 +120,7 @@ router.patch('/partidos/:id', async (req, res) => {
         invalidate('partidos:lista');
         invalidate(`ranking:${id}`);
         invalidate(`resumen:${id}`);
+        notificar(id);
         return res.json({ success: true, partido: rows[0] });
     } catch (err) {
         console.error('Error en /admin/partidos PATCH:', err);

@@ -4,6 +4,7 @@ const { coincideEquipo } = require('./equiposMap');
 const { calcularRanking } = require('./rankingService');
 const { notificarGanadoresDelGol } = require('./notificacionesService');
 const { invalidate } = require('../utils/cache');
+const { notificar } = require('../utils/sse');
 
 // football-data.org (plan gratuito) permite 10 solicitudes por minuto.
 // 10s = 6 solicitudes/minuto, deja margen para no llegar al límite.
@@ -59,6 +60,7 @@ async function actualizarMarcadores() {
         invalidate('partidos:lista');
         invalidate(`ranking:${partido.id}`);
         invalidate(`resumen:${partido.id}`);
+        notificar(partido.id);
 
         if (marcadorCambio) {
             const ranking = await calcularRanking(partido.id);
