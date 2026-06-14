@@ -69,17 +69,6 @@ router.post('/crear-link', async (req, res) => {
             usuario = nuevoUsuario[0];
         }
 
-        // Verificar que no tenga una transacción activa (no rechazada) para este partido
-        const { rows: transaccionesExistentes } = await client.query(
-            `SELECT * FROM transacciones WHERE usuario_id = $1 AND partido_id = $2 AND estado_pago <> 'RECHAZADO'`,
-            [usuario.id, partido_id]
-        );
-
-        if (transaccionesExistentes.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ success: false, error: 'Ya tienes un bono registrado para este partido' });
-        }
-
         // Insertar transacción PENDIENTE
         const { rows: transaccionRows } = await client.query(
             `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token)
@@ -174,17 +163,6 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
                 [nombre, correo, celular]
             );
             usuario = nuevoUsuario[0];
-        }
-
-        // Verificar que no tenga una transacción activa (no rechazada) para este partido
-        const { rows: transaccionesExistentes } = await client.query(
-            `SELECT * FROM transacciones WHERE usuario_id = $1 AND partido_id = $2 AND estado_pago <> 'RECHAZADO'`,
-            [usuario.id, partido_id]
-        );
-
-        if (transaccionesExistentes.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ success: false, error: 'Ya tienes un bono registrado para este partido' });
         }
 
         // Insertar transacción PENDIENTE con el comprobante adjunto
