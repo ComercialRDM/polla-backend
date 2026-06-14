@@ -58,22 +58,27 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
 
         await client.query('COMMIT');
 
-        // Generar bono y enviar correo (fuera de la transacción SQL)
-        const bonoBuffer = await generarImagenBono({
-            nombre: usuario.nombre,
-            saldoBono: transaccion.saldo_bono,
-        });
+        // A partir de aquí la transacción ya quedó APROBADA en la base de datos.
+        // Cualquier error al generar el bono o notificar se loguea, pero no revierte la aprobación.
+        try {
+            const bonoBuffer = await generarImagenBono({
+                nombre: usuario.nombre,
+                saldoBono: transaccion.saldo_bono,
+            });
 
-        await enviarCorreoBono({
-            destinatario: usuario.correo,
-            nombre: usuario.nombre,
-            saldoBono: transaccion.saldo_bono,
-            intentos: transaccion.intentos_totales,
-            tokenAcceso: transaccion.token_acceso,
-            bonoBuffer,
-        });
+            await enviarCorreoBono({
+                destinatario: usuario.correo,
+                nombre: usuario.nombre,
+                saldoBono: transaccion.saldo_bono,
+                intentos: transaccion.intentos_totales,
+                tokenAcceso: transaccion.token_acceso,
+                bonoBuffer,
+            });
+        } catch (errCorreo) {
+            console.error('Error enviando correo del bono:', errCorreo.message);
+        }
 
-        // Enviar el bono y el acceso a la polla por WhatsApp (no bloquea si falla)
+        // Enviar el bono y el acceso a la polla por WhatsApp
         try {
             const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${transaccion.token_acceso}`;
             const mensaje = `¡Gracias por tu compra, ${usuario.nombre}! 🇨🇴\n\n`

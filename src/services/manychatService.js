@@ -41,6 +41,7 @@ async function enviarContenidoManyChat({ celular, messages }) {
                 Authorization: `Bearer ${MANYCHAT_API_KEY}`,
                 'Content-Type': 'application/json',
             },
+            timeout: 10000,
         }
     );
 }
