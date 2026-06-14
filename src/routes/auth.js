@@ -6,6 +6,7 @@ const { enviarMensajeManyChat } = require('../services/manychatService');
 const router = express.Router();
 
 const RESET_CODE_VIGENCIA_MIN = 10;
+const RESET_INTENTOS_MAX = 5;
 
 function normalizarCelular(celular) {
     return String(celular || '').replace(/[^0-9+]/g, '').trim();
@@ -121,20 +122,20 @@ router.post('/solicitar-reset', async (req, res) => {
             [celularNormalizado]
         );
 
-        if (rows.length === 0) {
-            return res.status(404).json({ success: false, error: 'No encontramos una cuenta con este celular.' });
+        // Respuesta genérica siempre, exista o no la cuenta, para evitar enumeración de usuarios.
+        // El mensaje de WhatsApp solo se envía si la cuenta existe.
+        if (rows.length > 0) {
+            const codigo = generarCodigoOTP();
+            await pool.query(
+                `UPDATE usuarios SET reset_code = $1, reset_code_expira = now() + interval '${RESET_CODE_VIGENCIA_MIN} minutes', reset_intentos = 0 WHERE id = $2`,
+                [codigo, rows[0].id]
+            );
+
+            await enviarMensajeManyChat({
+                celular: rows[0].celular,
+                mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
+            });
         }
-
-        const codigo = generarCodigoOTP();
-        await pool.query(
-            `UPDATE usuarios SET reset_code = $1, reset_code_expira = now() + interval '${RESET_CODE_VIGENCIA_MIN} minutes' WHERE id = $2`,
-            [codigo, rows[0].id]
-        );
-
-        await enviarMensajeManyChat({
-            celular: rows[0].celular,
-            mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
-        });
 
         return res.json({ success: true });
     } catch (err) {
@@ -157,7 +158,7 @@ router.post('/restablecer-password', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT id, reset_code, reset_code_expira FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            `SELECT id, reset_code, reset_code_expira, reset_intentos FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
             [celularNormalizado]
         );
 
@@ -166,16 +167,27 @@ router.post('/restablecer-password', async (req, res) => {
         }
 
         const usuario = rows[0];
-        if (!usuario.reset_code || usuario.reset_code !== String(codigo).trim()) {
-            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
-        }
-        if (!usuario.reset_code_expira || new Date(usuario.reset_code_expira) < new Date()) {
+
+        if (!usuario.reset_code || !usuario.reset_code_expira || new Date(usuario.reset_code_expira) < new Date()) {
             return res.status(400).json({ success: false, error: 'El código venció. Solicita uno nuevo.' });
+        }
+
+        if (usuario.reset_intentos >= RESET_INTENTOS_MAX) {
+            await pool.query(
+                `UPDATE usuarios SET reset_code = NULL, reset_code_expira = NULL, reset_intentos = 0 WHERE id = $1`,
+                [usuario.id]
+            );
+            return res.status(429).json({ success: false, error: 'Demasiados intentos. Solicita un nuevo código.' });
+        }
+
+        if (usuario.reset_code !== String(codigo).trim()) {
+            await pool.query('UPDATE usuarios SET reset_intentos = reset_intentos + 1 WHERE id = $1', [usuario.id]);
+            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
         }
 
         const passwordHash = await bcrypt.hash(nueva_password, 10);
         await pool.query(
-            `UPDATE usuarios SET password_hash = $1, reset_code = NULL, reset_code_expira = NULL WHERE id = $2`,
+            `UPDATE usuarios SET password_hash = $1, reset_code = NULL, reset_code_expira = NULL, reset_intentos = 0 WHERE id = $2`,
             [passwordHash, usuario.id]
         );
 

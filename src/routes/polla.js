@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
+const { invalidate } = require('../utils/cache');
 
 const router = express.Router();
 
@@ -185,8 +186,10 @@ router.post('/votar', async (req, res) => {
 
         const transaccion = transaccionRows[0];
 
-        // Verificar el partido y la hora límite (hora del servidor UTC como única verdad)
-        const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1 FOR UPDATE', [partido_id]);
+        // Verificar el partido y la hora límite (hora del servidor UTC como única verdad).
+        // Sin FOR UPDATE: solo lectura, no es necesario bloquear la fila del partido y
+        // evita serializar los votos de todos los usuarios de un mismo partido.
+        const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1', [partido_id]);
         if (partidoRows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
@@ -225,6 +228,10 @@ router.post('/votar', async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        invalidate(`ranking:${partido_id}`);
+        invalidate(`resumen:${partido_id}`);
+        invalidate(`pronosticos:${partido_id}`);
 
         try {
             const { rows: usuarioRows } = await pool.query(

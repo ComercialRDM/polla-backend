@@ -3,6 +3,7 @@ const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra } = require('../services/emailService');
+const { invalidate } = require('../utils/cache');
 
 const router = express.Router();
 
@@ -75,6 +76,7 @@ router.post('/partidos', async (req, res) => {
              RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, estado`,
             [equipo_local, equipo_visitante, fecha_hora_inicio]
         );
+        invalidate('partidos:lista');
         return res.json({ success: true, partido: rows[0] });
     } catch (err) {
         console.error('Error en /admin/partidos:', err);
@@ -114,6 +116,9 @@ router.patch('/partidos/:id', async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
         }
+        invalidate('partidos:lista');
+        invalidate(`ranking:${id}`);
+        invalidate(`resumen:${id}`);
         return res.json({ success: true, partido: rows[0] });
     } catch (err) {
         console.error('Error en /admin/partidos PATCH:', err);
@@ -130,6 +135,7 @@ router.delete('/partidos/:id', async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
         }
+        invalidate('partidos:lista');
         return res.json({ success: true });
     } catch (err) {
         if (err.code === '23503') {

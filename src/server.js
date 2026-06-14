@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 
 const pool = require('./db');
 const transaccionesRouter = require('./routes/transacciones');
@@ -10,13 +11,35 @@ const pollaRouter = require('./routes/polla');
 const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 const partidosRouter = require('./routes/partidos');
+const { authLimiter, adminLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Orígenes permitidos para CORS (separados por coma). Si no se define, permite todos
+// los orígenes (modo permisivo de respaldo, pero se recomienda configurar FRONTEND_URL).
+const origenesPermitidos = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((origen) => origen.trim())
+    .filter(Boolean);
+
+if (origenesPermitidos.length === 0) {
+    console.warn('FRONTEND_URL no está configurado: CORS permitirá cualquier origen.');
+}
+
+// CSP no aplica a una API que solo devuelve JSON/imágenes; se desactiva para evitar
+// interferencias. Se permite que /api/polla/bono/:token (imagen del bono) se cargue
+// desde el frontend (otro origen) y desde WhatsApp/ManyChat.
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+}));
+app.use(cors({
+    origin: origenesPermitidos.length > 0 ? origenesPermitidos : true,
+}));
+app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -25,8 +48,8 @@ app.get('/health', (req, res) => {
 app.use('/api/transacciones', transaccionesRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/polla', pollaRouter);
-app.use('/api/auth', authRouter);
-app.use('/api/admin', adminRouter);
+app.use('/api/auth', authLimiter, authRouter);
+app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/partidos', partidosRouter);
 
 // Manejo de errores de subida de archivos (multer) y otros errores no controlados
@@ -58,6 +81,7 @@ app.listen(PORT, async () => {
     try {
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code VARCHAR(6)`);
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code_expira TIMESTAMPTZ`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_intentos INTEGER NOT NULL DEFAULT 0`);
     } catch (err) {
         console.error('Error aplicando migración de reset_code:', err.message);
     }
