@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const Sentry = require('./instrument');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -51,6 +53,11 @@ app.use('/api/polla', pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/partidos', partidosRouter);
+
+// Reporta a Sentry los errores no controlados que lleguen hasta aquí
+if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+}
 
 // Manejo de errores de subida de archivos (multer) y otros errores no controlados
 app.use((err, req, res, next) => {
