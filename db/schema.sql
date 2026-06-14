@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS partidos (
 ALTER TABLE partidos ADD COLUMN IF NOT EXISTS goles_local INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE partidos ADD COLUMN IF NOT EXISTS goles_visitante INTEGER NOT NULL DEFAULT 0;
 
+-- Marca si ya se notificó por WhatsApp a los participantes que el partido comenzó
+ALTER TABLE partidos ADD COLUMN IF NOT EXISTS notificado_inicio BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: transacciones
 -- ============================================================
@@ -54,10 +57,8 @@ CREATE TABLE IF NOT EXISTS transacciones (
     fecha_creacion          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Un usuario solo puede tener una transaccion activa (no rechazada) por partido
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_usuario_partido_activo
-    ON transacciones (usuario_id, partido_id)
-    WHERE estado_pago <> 'RECHAZADO';
+-- Un usuario puede comprar varios bonos para el mismo partido
+DROP INDEX IF EXISTS uniq_usuario_partido_activo;
 
 -- Comprobante de pago (foto) para transferencias manuales revisadas por el admin
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_imagen BYTEA;

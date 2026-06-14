@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
+const { enviarBonoManyChat } = require('./manychatService');
 
 /**
  * Aprueba una transacción de forma idempotente: solo actualiza si está PENDIENTE.
@@ -52,6 +53,9 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         const { rows: usuarioRows } = await client.query('SELECT * FROM usuarios WHERE id = $1', [transaccion.usuario_id]);
         const usuario = usuarioRows[0];
 
+        const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1', [transaccion.partido_id]);
+        const partido = partidoRows[0];
+
         await client.query('COMMIT');
 
         // Generar bono y enviar correo (fuera de la transacción SQL)
@@ -68,6 +72,23 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
             tokenAcceso: transaccion.token_acceso,
             bonoBuffer,
         });
+
+        // Enviar el bono y el acceso a la polla por WhatsApp (no bloquea si falla)
+        try {
+            const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${transaccion.token_acceso}`;
+            const mensaje = `¡Gracias por tu compra, ${usuario.nombre}! 🇨🇴\n\n`
+                + `Aquí está tu Bono Digital de $${transaccion.saldo_bono.toLocaleString('es-CO')} para servicios de La Retoucherie.\n\n`
+                + `Ya quedaste inscrito en la Polla Mundialista para ${partido.equipo_local} vs ${partido.equipo_visitante} con ${transaccion.intentos_totales} intento(s).\n\n`
+                + `Ingresa aquí para registrar tu pronóstico: ${linkPolla}`;
+
+            await enviarBonoManyChat({
+                celular: usuario.celular,
+                mensaje,
+                imagenUrl: `${process.env.BACKEND_URL}/api/polla/bono/${transaccion.token_acceso}`,
+            });
+        } catch (errWhatsapp) {
+            console.error('Error enviando bono por WhatsApp:', errWhatsapp.response?.data || errWhatsapp.message);
+        }
 
         return { ok: true };
     } catch (err) {

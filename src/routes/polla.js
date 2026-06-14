@@ -1,8 +1,38 @@
 const express = require('express');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
+const { generarImagenBono } = require('../services/bonoService');
 
 const router = express.Router();
+
+// GET /api/polla/bono/:token - imagen del bono digital (PNG), pública para poder enviarla por WhatsApp
+router.get('/bono/:token', async (req, res) => {
+    const { token } = req.params;
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT t.saldo_bono, u.nombre
+             FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
+             LIMIT 1`,
+            [token]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).send('Bono no encontrado');
+        }
+
+        const { nombre, saldo_bono } = rows[0];
+        const bonoBuffer = await generarImagenBono({ nombre, saldoBono: saldo_bono });
+
+        res.set('Content-Type', 'image/png');
+        return res.send(bonoBuffer);
+    } catch (err) {
+        console.error('Error en /polla/bono/:token:', err);
+        return res.status(500).send('Error interno');
+    }
+});
 
 // GET /api/polla/info?token_acceso=
 // Recupera los datos de la transacción y del partido a partir del token (link de acceso por correo)

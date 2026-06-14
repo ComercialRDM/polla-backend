@@ -134,7 +134,7 @@ router.post('/partido-en-vivo', async (req, res) => {
  * Envía por ManyChat la notificación de gol a los usuarios que están acertando el marcador actual.
  */
 async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisitanteNuevo }) {
-    const mensaje = `¡GOL DE COLOMBIA! 🇨🇴 El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. Con este resultado, estás acertando en la polla mundialista. ¡Mantén los dedos cruzados! ⚽✨`;
+    const mensaje = `⚽ ¡GOL! El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. ¡Estás ganando en la Polla Retoucherie! Mantén los dedos cruzados 🤞🇨🇴`;
 
     for (const ganador of ganadores) {
         try {

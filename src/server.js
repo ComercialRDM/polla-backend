@@ -8,6 +8,7 @@ const webhooksRouter = require('./routes/webhooks');
 const pollaRouter = require('./routes/polla');
 const adminRouter = require('./routes/admin');
 const partidosRouter = require('./routes/partidos');
+const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 
 const app = express();
 
@@ -36,4 +37,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
     console.log(`Servidor de la Polla Mundialista corriendo en http://localhost:${PORT}`);
+    iniciarMonitorPartidos();
 });
