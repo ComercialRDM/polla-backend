@@ -10,13 +10,17 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS usuarios (
     id              SERIAL PRIMARY KEY,
     nombre          VARCHAR(150) NOT NULL,
-    correo          VARCHAR(150) UNIQUE NOT NULL,
+    correo          VARCHAR(150) UNIQUE,
     celular         VARCHAR(20) UNIQUE NOT NULL,
     fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Equipos favoritos del usuario (personalización, no obligatorio)
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL DEFAULT '{}';
+
+-- Cuenta de acceso (celular + contraseña) para el registro general de clientes
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE usuarios ALTER COLUMN correo DROP NOT NULL;
 
 -- ============================================================
 -- Tabla: partidos

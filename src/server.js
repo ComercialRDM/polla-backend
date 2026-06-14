@@ -7,6 +7,7 @@ const pool = require('./db');
 const transaccionesRouter = require('./routes/transacciones');
 const webhooksRouter = require('./routes/webhooks');
 const pollaRouter = require('./routes/polla');
+const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 const partidosRouter = require('./routes/partidos');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
@@ -24,6 +25,7 @@ app.get('/health', (req, res) => {
 app.use('/api/transacciones', transaccionesRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/polla', pollaRouter);
+app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/partidos', partidosRouter);
 
@@ -44,6 +46,13 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL DEFAULT '{}'`);
     } catch (err) {
         console.error('Error aplicando migración de equipos_favoritos:', err.message);
+    }
+
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash TEXT`);
+        await pool.query(`ALTER TABLE usuarios ALTER COLUMN correo DROP NOT NULL`);
+    } catch (err) {
+        console.error('Error aplicando migración de password_hash:', err.message);
     }
 
     iniciarMonitorPartidos();
