@@ -78,6 +78,32 @@ async function obtenerResumenPublico(partidoId) {
     };
 }
 
+/**
+ * Lista pública de pronósticos registrados para un partido, para mostrar en el Home
+ * y generar sensación de comunidad (FOMO). Nombres enmascarados por privacidad.
+ * @param {number} partidoId
+ * @param {number} limit
+ * @returns {Promise<Array<{ nombre: string, goles_local: number, goles_visitante: number, fecha_registro: string }>>}
+ */
+async function obtenerPronosticosPublicos(partidoId, limit = 50) {
+    const { rows } = await pool.query(
+        `SELECT u.nombre, p.goles_local, p.goles_visitante, p.fecha_registro
+         FROM pronosticos p
+         JOIN usuarios u ON u.id = p.usuario_id
+         WHERE p.partido_id = $1
+         ORDER BY p.fecha_registro DESC
+         LIMIT $2`,
+        [partidoId, limit]
+    );
+
+    return rows.map((r) => ({
+        nombre: enmascararNombre(r.nombre),
+        goles_local: r.goles_local,
+        goles_visitante: r.goles_visitante,
+        fecha_registro: r.fecha_registro,
+    }));
+}
+
 function enmascararNombre(nombreCompleto) {
     const partes = nombreCompleto.trim().split(/\s+/);
     const nombre = partes[0];
@@ -85,4 +111,4 @@ function enmascararNombre(nombreCompleto) {
     return `${nombre} ${inicialApellido}`.trim();
 }
 
-module.exports = { calcularRanking, obtenerResumenPublico };
+module.exports = { calcularRanking, obtenerResumenPublico, obtenerPronosticosPublicos };

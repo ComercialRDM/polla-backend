@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { calcularRanking, obtenerResumenPublico } = require('../services/rankingService');
+const { calcularRanking, obtenerResumenPublico, obtenerPronosticosPublicos } = require('../services/rankingService');
 
 const router = express.Router();
 
@@ -48,6 +48,19 @@ router.get('/:id/resumen-publico', async (req, res) => {
         return res.json({ success: true, ...resumen });
     } catch (err) {
         console.error('Error en /partidos/:id/resumen-publico:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/partidos/:id/pronosticos-publicos - listado de pronósticos registrados (nombres enmascarados), para generar FOMO
+router.get('/:id/pronosticos-publicos', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const pronosticos = await obtenerPronosticosPublicos(id);
+        return res.json({ success: true, pronosticos });
+    } catch (err) {
+        console.error('Error en /partidos/:id/pronosticos-publicos:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
