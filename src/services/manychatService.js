@@ -32,8 +32,27 @@ async function manychatRequest(path, body) {
     return data;
 }
 
+async function manychatGet(path, params) {
+    const { data } = await axios.get(`${MANYCHAT_API_URL}${path}`, {
+        headers: { Authorization: `Bearer ${MANYCHAT_API_KEY}` },
+        params,
+        timeout: 10000,
+        validateStatus: () => true,
+    });
+    return data;
+}
+
+/**
+ * Indica si la respuesta de createSubscriber indica que el suscriptor ya existe.
+ */
+function suscriptorYaExiste(respuesta) {
+    const mensajes = respuesta?.details?.messages?.wa_id?.message;
+    return Array.isArray(mensajes) && mensajes.some((m) => /already exists/i.test(m));
+}
+
 /**
  * Obtiene el subscriber_id de ManyChat asociado a un celular, creándolo si no existe.
+ * Si ya existe un suscriptor con ese número de WhatsApp, lo busca por teléfono.
  * @param {string} celular
  * @returns {Promise<number|null>}
  */
@@ -45,7 +64,19 @@ async function obtenerSubscriberId(celular) {
         consent_phrase: 'Acepto recibir mensajes de La Retoucherie por WhatsApp',
     });
 
-    const subscriberId = respuesta?.data?.id || respuesta?.details?.[0]?.extra?.id;
+    let subscriberId = respuesta?.data?.id || respuesta?.details?.[0]?.extra?.id;
+
+    if (!subscriberId && suscriptorYaExiste(respuesta)) {
+        const busqueda = await manychatGet('/fb/subscriber/findBySystemField', {
+            system_field_name: 'whatsapp_phone',
+            system_field_value: whatsappPhone,
+        });
+        subscriberId = busqueda?.data?.id;
+
+        if (!subscriberId) {
+            console.error('No se pudo encontrar el suscriptor existente de ManyChat para', celular, JSON.stringify(busqueda));
+        }
+    }
 
     if (!subscriberId) {
         console.error('No se pudo obtener subscriber_id de ManyChat para', celular, JSON.stringify(respuesta));
