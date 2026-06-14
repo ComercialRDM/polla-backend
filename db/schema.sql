@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
     fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Equipos favoritos del usuario (personalización, no obligatorio)
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL DEFAULT '{}';
+
 -- ============================================================
 -- Tabla: partidos
 -- ============================================================

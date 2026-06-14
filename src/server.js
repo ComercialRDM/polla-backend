@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
+const pool = require('./db');
 const transaccionesRouter = require('./routes/transacciones');
 const webhooksRouter = require('./routes/webhooks');
 const pollaRouter = require('./routes/polla');
@@ -36,8 +37,15 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`Servidor de la Polla Mundialista corriendo en http://localhost:${PORT}`);
+
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL DEFAULT '{}'`);
+    } catch (err) {
+        console.error('Error aplicando migración de equipos_favoritos:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

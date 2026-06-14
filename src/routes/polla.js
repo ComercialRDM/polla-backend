@@ -45,7 +45,7 @@ router.get('/info', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.*, u.nombre, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio, p.estado AS estado_partido
+            `SELECT t.*, u.nombre, u.equipos_favoritos, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio, p.estado AS estado_partido
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              JOIN partidos p ON p.id = t.partido_id
@@ -69,6 +69,7 @@ router.get('/info', async (req, res) => {
             estado_partido: t.estado_partido,
             intentos_disponibles: t.intentos_totales - t.intentos_usados,
             intentos_totales: t.intentos_totales,
+            equipos_favoritos: t.equipos_favoritos || [],
         });
     } catch (err) {
         console.error('Error en /polla/info:', err);
@@ -113,6 +114,39 @@ router.get('/verificar-acceso', async (req, res) => {
     } catch (err) {
         console.error('Error en verificar-acceso:', err);
         return res.status(500).json({ acceso: false, error: 'Error interno' });
+    }
+});
+
+// PUT /api/polla/equipos-favoritos - guarda los equipos favoritos del usuario (personalización opcional)
+router.put('/equipos-favoritos', async (req, res) => {
+    const { token_acceso, equipos_favoritos } = req.body;
+
+    if (!token_acceso || !Array.isArray(equipos_favoritos)) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+
+    if (equipos_favoritos.length > 5 || equipos_favoritos.some((e) => typeof e !== 'string' || !e.trim())) {
+        return res.status(400).json({ success: false, error: 'Selecciona como máximo 5 equipos válidos' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `UPDATE usuarios u
+             SET equipos_favoritos = $1
+             FROM transacciones t
+             WHERE t.usuario_id = u.id AND t.token_acceso = $2 AND t.estado_pago = 'APROBADO'
+             RETURNING u.equipos_favoritos`,
+            [equipos_favoritos, token_acceso]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Acceso no válido' });
+        }
+
+        return res.json({ success: true, equipos_favoritos: rows[0].equipos_favoritos });
+    } catch (err) {
+        console.error('Error en /polla/equipos-favoritos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 
