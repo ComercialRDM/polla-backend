@@ -5,8 +5,8 @@ const { calcularRanking } = require('./rankingService');
 const { notificarGanadoresDelGol } = require('./notificacionesService');
 
 // football-data.org (plan gratuito) permite 10 solicitudes por minuto.
-// 20s = 3 solicitudes/minuto, deja margen amplio para no llegar al límite.
-const INTERVALO_MS = 20 * 1000;
+// 10s = 6 solicitudes/minuto, deja margen para no llegar al límite.
+const INTERVALO_MS = 10 * 1000;
 
 /**
  * Consulta football-data.org y actualiza el marcador y estado de los
