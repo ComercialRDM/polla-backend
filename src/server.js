@@ -47,11 +47,6 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// TEMPORAL: para verificar que Sentry recibe errores del backend. Quitar después de probar.
-app.get('/debug-sentry', () => {
-    throw new Error('Prueba Sentry backend');
-});
-
 app.use('/api/transacciones', transaccionesRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/polla', pollaRouter);
