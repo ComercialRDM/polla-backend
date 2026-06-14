@@ -3,7 +3,7 @@ const pool = require('../db');
 const { validarFirmaWebhook } = require('../services/wompiService');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { calcularRanking } = require('../services/rankingService');
-const { enviarMensajeManyChat } = require('../services/manychatService');
+const { notificarGanadoresDelGol } = require('../services/notificacionesService');
 
 const router = express.Router();
 
@@ -129,20 +129,5 @@ router.post('/partido-en-vivo', async (req, res) => {
         return res.status(200).json({ success: false, error: 'error interno, evento recibido' });
     }
 });
-
-/**
- * Envía por ManyChat la notificación de gol a los usuarios que están acertando el marcador actual.
- */
-async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisitanteNuevo }) {
-    const mensaje = `⚽ ¡GOL! El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. ¡Estás ganando en la Polla Retoucherie! Mantén los dedos cruzados 🤞🇨🇴`;
-
-    for (const ganador of ganadores) {
-        try {
-            await enviarMensajeManyChat({ celular: ganador.celular, mensaje });
-        } catch (err) {
-            console.error(`Error enviando notificación ManyChat a ${ganador.celular}:`, err.message);
-        }
-    }
-}
 
 module.exports = router;

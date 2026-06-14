@@ -50,4 +50,19 @@ function iniciarMonitorPartidos() {
     }, INTERVALO_MS);
 }
 
-module.exports = { iniciarMonitorPartidos };
+/**
+ * Envía por ManyChat la notificación de gol a los usuarios que están acertando el marcador actual.
+ */
+async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisitanteNuevo }) {
+    const mensaje = `⚽ ¡GOL! El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. ¡Estás ganando en la Polla Retoucherie! Mantén los dedos cruzados 🤞🇨🇴`;
+
+    for (const ganador of ganadores) {
+        try {
+            await enviarMensajeManyChat({ celular: ganador.celular, mensaje });
+        } catch (err) {
+            console.error(`Error enviando notificación ManyChat a ${ganador.celular}:`, err.message);
+        }
+    }
+}
+
+module.exports = { iniciarMonitorPartidos, notificarGanadoresDelGol };
