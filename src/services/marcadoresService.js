@@ -4,7 +4,9 @@ const { coincideEquipo } = require('./equiposMap');
 const { calcularRanking } = require('./rankingService');
 const { notificarGanadoresDelGol } = require('./notificacionesService');
 
-const INTERVALO_MS = 90 * 1000;
+// football-data.org (plan gratuito) permite 10 solicitudes por minuto.
+// 20s = 3 solicitudes/minuto, deja margen amplio para no llegar al límite.
+const INTERVALO_MS = 20 * 1000;
 
 /**
  * Consulta football-data.org y actualiza el marcador y estado de los
