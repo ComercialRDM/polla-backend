@@ -82,6 +82,45 @@ router.post('/partidos', async (req, res) => {
     }
 });
 
+// PATCH /api/admin/partidos/:id - corrige fecha, marcador o estado de un partido
+router.patch('/partidos/:id', async (req, res) => {
+    const { id } = req.params;
+    const { fecha_hora_inicio, goles_local, goles_visitante, estado } = req.body;
+
+    if (estado && !['activo', 'cerrado'].includes(estado)) {
+        return res.status(400).json({ success: false, error: 'Estado inválido' });
+    }
+
+    const campos = [];
+    const valores = [];
+    let i = 1;
+
+    if (fecha_hora_inicio !== undefined) { campos.push(`fecha_hora_inicio = $${i++}`); valores.push(fecha_hora_inicio); }
+    if (goles_local !== undefined) { campos.push(`goles_local = $${i++}`); valores.push(goles_local); }
+    if (goles_visitante !== undefined) { campos.push(`goles_visitante = $${i++}`); valores.push(goles_visitante); }
+    if (estado !== undefined) { campos.push(`estado = $${i++}`); valores.push(estado); }
+
+    if (campos.length === 0) {
+        return res.status(400).json({ success: false, error: 'No hay campos para actualizar' });
+    }
+
+    valores.push(id);
+
+    try {
+        const { rows } = await pool.query(
+            `UPDATE partidos SET ${campos.join(', ')} WHERE id = $${i} RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, goles_local, goles_visitante, estado`,
+            valores
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        return res.json({ success: true, partido: rows[0] });
+    } catch (err) {
+        console.error('Error en /admin/partidos PATCH:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // DELETE /api/admin/partidos/:id
 router.delete('/partidos/:id', async (req, res) => {
     const { id } = req.params;
