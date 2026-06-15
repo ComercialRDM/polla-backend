@@ -6,6 +6,7 @@ const { obtenerSaldoUsuario } = require('../services/walletService');
 const { CUPO_VALOR } = require('../config/planes');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
+const { generarICS } = require('../services/calendarioService');
 
 const router = express.Router();
 
@@ -43,6 +44,41 @@ router.get('/bono/:token', async (req, res) => {
     }
 });
 
+// GET /api/polla/calendario/:calendario_token.ics - feed de calendario (.ics) con
+// los partidos de los equipos favoritos del usuario, pública para poder suscribirse
+// desde Apple/Google/Outlook Calendar.
+router.get('/calendario/:calendario_token.ics', async (req, res) => {
+    const { calendario_token } = req.params;
+
+    try {
+        const { rows: usuarioRows } = await pool.query(
+            'SELECT equipos_favoritos FROM usuarios WHERE calendario_token = $1',
+            [calendario_token]
+        );
+
+        const equiposFavoritos = usuarioRows[0]?.equipos_favoritos || [];
+
+        let partidos = [];
+        if (equiposFavoritos.length > 0) {
+            const { rows } = await pool.query(
+                `SELECT id, equipo_local, equipo_visitante, fecha_hora_inicio
+                 FROM partidos
+                 ORDER BY fecha_hora_inicio ASC`
+            );
+            partidos = rows;
+        }
+
+        const ics = generarICS({ equiposFavoritos, partidos });
+
+        res.set('Content-Type', 'text/calendar; charset=utf-8');
+        res.set('Cache-Control', 'no-cache');
+        return res.send(ics);
+    } catch (err) {
+        console.error('Error en /polla/calendario/:calendario_token.ics:', err);
+        return res.status(500).send('Error interno');
+    }
+});
+
 // GET /api/polla/info?token_acceso=
 // Recupera el monedero de cupos del usuario y la lista de partidos activos a partir del token
 router.get('/info', async (req, res) => {
@@ -54,7 +90,7 @@ router.get('/info', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.usuario_id, u.nombre, u.equipos_favoritos
+            `SELECT t.usuario_id, u.nombre, u.equipos_favoritos, u.calendario_token
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -66,7 +102,7 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, nombre, equipos_favoritos } = rows[0];
+        const { usuario_id, nombre, equipos_favoritos, calendario_token } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -96,6 +132,7 @@ router.get('/info', async (req, res) => {
             acceso: true,
             nombre,
             equipos_favoritos: equipos_favoritos || [],
+            calendario_token,
             cupos_totales: saldo.cuposTotales,
             cupos_usados: saldo.cuposUsados,
             cupos_disponibles: saldo.cuposDisponibles,

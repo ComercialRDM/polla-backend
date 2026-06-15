@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
 -- Equipos favoritos del usuario (personalización, no obligatorio)
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL DEFAULT '{}';
 
+-- Token público para el feed de calendario (.ics) de partidos de equipos favoritos
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS calendario_token UUID NOT NULL DEFAULT gen_random_uuid();
+
 -- Cuenta de acceso (celular + contraseña) para el registro general de clientes
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE usuarios ALTER COLUMN correo DROP NOT NULL;

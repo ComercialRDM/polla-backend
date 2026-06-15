@@ -64,14 +64,14 @@ router.post('/registro', async (req, res) => {
 
             const { rows } = await pool.query(
                 `UPDATE usuarios SET nombre = $1, password_hash = $2, equipos_favoritos = $3 WHERE id = $4
-                 RETURNING id, nombre, celular, equipos_favoritos`,
+                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
                 [nombreLimpio, passwordHash, equipos, existentes[0].id]
             );
             usuario = rows[0];
         } else {
             const { rows } = await pool.query(
                 `INSERT INTO usuarios (nombre, celular, password_hash, equipos_favoritos) VALUES ($1, $2, $3, $4)
-                 RETURNING id, nombre, celular, equipos_favoritos`,
+                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
                 [nombreLimpio, celularNormalizado, passwordHash, equipos]
             );
             usuario = rows[0];
@@ -98,7 +98,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT id, nombre, celular, equipos_favoritos, password_hash FROM usuarios
+            `SELECT id, nombre, celular, equipos_favoritos, calendario_token, password_hash FROM usuarios
              WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
             [celularNormalizado]
         );
@@ -234,7 +234,7 @@ router.post('/google', async (req, res) => {
         const nombre = payload.name || '';
 
         const { rows: porGoogleId } = await pool.query(
-            'SELECT id, nombre, celular, equipos_favoritos FROM usuarios WHERE google_id = $1',
+            'SELECT id, nombre, celular, equipos_favoritos, calendario_token FROM usuarios WHERE google_id = $1',
             [googleId]
         );
         if (porGoogleId.length > 0) {
@@ -244,7 +244,7 @@ router.post('/google', async (req, res) => {
         // Si ya existe una cuenta con ese correo verificado, se vincula a la cuenta de Google
         if (correo && payload.email_verified) {
             const { rows: porCorreo } = await pool.query(
-                'SELECT id, nombre, celular, equipos_favoritos FROM usuarios WHERE correo = $1',
+                'SELECT id, nombre, celular, equipos_favoritos, calendario_token FROM usuarios WHERE correo = $1',
                 [correo]
             );
             if (porCorreo.length > 0) {
@@ -301,14 +301,14 @@ router.post('/google/completar', async (req, res) => {
 
             const { rows } = await pool.query(
                 `UPDATE usuarios SET google_id = $1 WHERE id = $2
-                 RETURNING id, nombre, celular, equipos_favoritos`,
+                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
                 [googleId, existentes[0].id]
             );
             usuario = rows[0];
         } else {
             const { rows } = await pool.query(
                 `INSERT INTO usuarios (nombre, correo, celular, google_id, equipos_favoritos) VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, nombre, celular, equipos_favoritos`,
+                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
                 [nombre || 'Usuario', correo, celularNormalizado, googleId, equipos]
             );
             usuario = rows[0];
