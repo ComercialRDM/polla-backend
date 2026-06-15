@@ -1,16 +1,4 @@
-const crypto = require('crypto');
 const { verificarToken } = require('../utils/adminTokens');
-
-function compararSeguro(a, b) {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) {
-        // Compara contra sí mismo para mantener un tiempo constante aunque las longitudes difieran
-        crypto.timingSafeEqual(bufA, bufA);
-        return false;
-    }
-    return crypto.timingSafeEqual(bufA, bufB);
-}
 
 function adminAuth(req, res, next) {
     const header = req.headers.authorization || '';
@@ -22,18 +10,12 @@ function adminAuth(req, res, next) {
 
     // Token de sesión emitido por /api/admin/login (cuenta individual)
     const sesion = verificarToken(token);
-    if (sesion) {
-        req.admin = sesion;
-        return next();
+    if (!sesion) {
+        return res.status(401).json({ success: false, error: 'No autorizado' });
     }
 
-    // Respaldo transitorio: clave estática ADMIN_API_KEY (será retirada)
-    const claveEsperada = process.env.ADMIN_API_KEY || '';
-    if (claveEsperada && compararSeguro(token, claveEsperada)) {
-        return next();
-    }
-
-    return res.status(401).json({ success: false, error: 'No autorizado' });
+    req.admin = sesion;
+    return next();
 }
 
 module.exports = adminAuth;

@@ -1,13 +1,12 @@
 const crypto = require('crypto');
 
 // Secreto para firmar los tokens de sesión del panel de administración.
-// Se recomienda definir ADMIN_JWT_SECRET en producción. Si no está definido,
-// se usa ADMIN_API_KEY (si existe) como respaldo y, en último caso, un valor
-// aleatorio generado en memoria (las sesiones no sobreviven a un reinicio).
-const SECRET = process.env.ADMIN_JWT_SECRET || process.env.ADMIN_API_KEY || crypto.randomBytes(32).toString('hex');
+// Si no está definido ADMIN_JWT_SECRET, se usa un valor aleatorio generado en
+// memoria (las sesiones no sobreviven a un reinicio del servidor).
+const SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 if (!process.env.ADMIN_JWT_SECRET) {
-    console.warn('ADMIN_JWT_SECRET no está configurado: se usará un secreto de respaldo. Define ADMIN_JWT_SECRET para sesiones admin estables entre reinicios.');
+    console.warn('ADMIN_JWT_SECRET no está configurado: las sesiones admin se invalidarán en cada reinicio. Define ADMIN_JWT_SECRET en las variables de entorno.');
 }
 
 const TOKEN_VIGENCIA_SEG = 12 * 60 * 60; // 12 horas

@@ -127,7 +127,7 @@ app.listen(PORT, async () => {
                 );
                 console.log(`Cuenta de administrador inicial creada para "${process.env.ADMIN_SEED_USUARIO}"`);
             } else {
-                console.warn('No hay cuentas en admin_usuarios. Define ADMIN_SEED_USUARIO y ADMIN_SEED_PASSWORD para crear la primera, o usa temporalmente ADMIN_API_KEY.');
+                console.warn('No hay cuentas en admin_usuarios. Define ADMIN_SEED_USUARIO y ADMIN_SEED_PASSWORD para crear la primera.');
             }
         }
     } catch (err) {
