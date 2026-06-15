@@ -20,7 +20,15 @@ const COORD = {
 const COVER = {
     valor: { x: 480, y: 545, w: 820, h: 220, color: '#F3EAE1' },
     nombre: { x: 700, y: 1035, w: 400, h: 50, color: '#FEE580' },
+    vigencia: { x: 350, y: 1108, w: 1060, h: 125, color: '#F4EBE2' },
+    sedes: { x: 330, y: 838, w: 945, h: 152, color: '#FEE580' },
 };
+
+// Texto de vigencia y sedes (tapa y reemplaza el texto fijo de la plantilla)
+const VIGENCIA_TEXTO_1 = '*Válido hasta el 1 de marzo de 2027 - 6:00 p.m.';
+const VIGENCIA_TEXTO_2 = 'Sedes en Barranquilla y Cartagena';
+const SEDES_TEXTO_1 = 'Preséntalo en cualquiera de nuestras';
+const SEDES_TEXTO_2 = 'sedes en Barranquilla o Cartagena';
 
 // Código QR (token de acceso del bono) en la esquina inferior derecha, para que
 // el local lo escanee y marque el bono como consumido
@@ -62,8 +70,14 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso }) {
     <svg width="${ANCHO}" height="${ALTO}" xmlns="http://www.w3.org/2000/svg">
         <rect x="${COVER.valor.x}" y="${COVER.valor.y}" width="${COVER.valor.w}" height="${COVER.valor.h}" fill="${COVER.valor.color}"/>
         <rect x="${COVER.nombre.x}" y="${COVER.nombre.y}" width="${COVER.nombre.w}" height="${COVER.nombre.h}" fill="${COVER.nombre.color}"/>
+        <rect x="${COVER.vigencia.x}" y="${COVER.vigencia.y}" width="${COVER.vigencia.w}" height="${COVER.vigencia.h}" fill="${COVER.vigencia.color}"/>
+        <rect x="${COVER.sedes.x}" y="${COVER.sedes.y}" width="${COVER.sedes.w}" height="${COVER.sedes.h}" fill="${COVER.sedes.color}"/>
         <text x="${COORD.valor.x}" y="${COORD.valor.y}" font-family="Georgia, 'Times New Roman', serif" font-size="${COORD.valor.fontSize}" font-weight="bold" fill="${COORD.valor.color}" text-anchor="middle">${valorFormateado}</text>
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="middle">${escapeXml(nombre)}</text>
+        <text x="${ANCHO / 2}" y="885" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(SEDES_TEXTO_1)}</text>
+        <text x="${ANCHO / 2}" y="940" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(SEDES_TEXTO_2)}</text>
+        <text x="${ANCHO / 2}" y="1150" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_1)}</text>
+        <text x="${ANCHO / 2}" y="1200" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_2)}</text>
     </svg>`;
 
     const composite = [{ input: Buffer.from(overlaySvg), top: 0, left: 0 }];
