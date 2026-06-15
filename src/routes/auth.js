@@ -118,7 +118,7 @@ router.post('/solicitar-reset', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT id, celular FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1 AND password_hash IS NOT NULL`,
+            `SELECT id, celular, manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1 AND password_hash IS NOT NULL`,
             [celularNormalizado]
         );
 
@@ -131,10 +131,15 @@ router.post('/solicitar-reset', async (req, res) => {
                 [codigo, rows[0].id]
             );
 
-            await enviarMensajeManyChat({
+            const { subscriberId } = await enviarMensajeManyChat({
                 celular: rows[0].celular,
                 mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
+                subscriberId: rows[0].manychat_subscriber_id,
             });
+
+            if (subscriberId && !rows[0].manychat_subscriber_id) {
+                await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), rows[0].id]);
+            }
         }
 
         return res.json({ success: true });

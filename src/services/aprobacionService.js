@@ -86,11 +86,16 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
                 + `Ya quedaste inscrito en la Polla Mundialista para ${partido.equipo_local} vs ${partido.equipo_visitante} con ${transaccion.intentos_totales} intento(s).\n\n`
                 + `Ingresa aquí para registrar tu pronóstico: ${linkPolla}`;
 
-            await enviarBonoManyChat({
+            const { subscriberId } = await enviarBonoManyChat({
                 celular: usuario.celular,
                 mensaje,
                 imagenUrl: `${process.env.BACKEND_URL}/api/polla/bono/${transaccion.token_acceso}`,
+                subscriberId: usuario.manychat_subscriber_id,
             });
+
+            if (subscriberId && !usuario.manychat_subscriber_id) {
+                await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), usuario.id]);
+            }
         } catch (errWhatsapp) {
             console.error('Error enviando bono por WhatsApp:', errWhatsapp.response?.data || errWhatsapp.message);
         }

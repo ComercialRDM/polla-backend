@@ -32,78 +32,50 @@ async function manychatRequest(path, body) {
     return data;
 }
 
-async function manychatGet(path, params) {
-    const { data } = await axios.get(`${MANYCHAT_API_URL}${path}`, {
-        headers: { Authorization: `Bearer ${MANYCHAT_API_KEY}` },
-        params,
-        timeout: 10000,
-        validateStatus: () => true,
-    });
-    return data;
-}
-
 /**
- * Indica si la respuesta de createSubscriber indica que el suscriptor ya existe.
+ * Crea el suscriptor de ManyChat para el celular indicado y devuelve su subscriber_id.
+ * Solo funciona para contactos que aún no existen en ManyChat: si ya existe, la API
+ * no permite recuperar su subscriber_id por teléfono (limitación conocida de ManyChat),
+ * por lo que para esos casos el id debe venir ya guardado en usuarios.manychat_subscriber_id.
  */
-function suscriptorYaExiste(respuesta) {
-    const mensajes = respuesta?.details?.messages?.wa_id?.message;
-    return Array.isArray(mensajes) && mensajes.some((m) => /already exists/i.test(m));
-}
-
-/**
- * Obtiene el subscriber_id de ManyChat asociado a un celular, creándolo si no existe.
- * Si ya existe un suscriptor con ese número de WhatsApp, lo busca por teléfono.
- * @param {string} celular
- * @returns {Promise<number|null>}
- */
-async function obtenerSubscriberId(celular) {
+async function crearSubscriberId(celular) {
     const whatsappPhone = `+${formatearCelularWhatsApp(celular)}`;
-
     const respuesta = await manychatRequest('/fb/subscriber/createSubscriber', {
         whatsapp_phone: whatsappPhone,
         consent_phrase: 'Acepto recibir mensajes de La Retoucherie por WhatsApp',
     });
 
-    let subscriberId = respuesta?.data?.id || respuesta?.details?.[0]?.extra?.id;
-
-    if (!subscriberId && suscriptorYaExiste(respuesta)) {
-        const busqueda = await manychatGet('/fb/subscriber/findBySystemField', {
-            phone: formatearCelularWhatsApp(celular),
-        });
-        const encontrado = Array.isArray(busqueda?.data) ? busqueda.data[0] : busqueda?.data;
-        subscriberId = encontrado?.id;
-
-        if (!subscriberId) {
-            console.error('No se pudo encontrar el suscriptor existente de ManyChat para', celular, JSON.stringify(busqueda));
-        }
-    }
-
+    const subscriberId = respuesta?.data?.id || respuesta?.details?.[0]?.extra?.id;
     if (!subscriberId) {
-        console.error('No se pudo obtener subscriber_id de ManyChat para', celular, JSON.stringify(respuesta));
-        return null;
+        console.error('No se pudo crear el suscriptor de ManyChat para', celular, JSON.stringify(respuesta));
     }
-
-    return subscriberId;
+    return subscriberId || null;
 }
 
 /**
- * Envía un bloque de mensajes (texto y/o imagen) a través de ManyChat al celular indicado.
- * Requiere MANYCHAT_API_KEY (token del bot en ManyChat).
- * @param {{ celular: string, messages: Array }} datos
+ * Envía un bloque de mensajes (texto y/o imagen) por WhatsApp a través de ManyChat.
+ * Si no se pasa `subscriberId`, intenta crear el suscriptor (solo funciona para
+ * contactos nuevos en ManyChat).
+ * @param {{ celular: string, messages: Array, subscriberId?: string|number }} datos
+ * @returns {Promise<{ subscriberId: string|number|null }>}
  */
-async function enviarContenidoManyChat({ celular, messages }) {
+async function enviarContenidoManyChat({ celular, messages, subscriberId }) {
     if (!MANYCHAT_API_KEY) {
         console.warn('MANYCHAT_API_KEY no configurada, no se envía notificación a', celular);
-        return;
+        return { subscriberId: subscriberId || null };
     }
 
-    const subscriberId = await obtenerSubscriberId(celular);
-    if (!subscriberId) {
+    let id = subscriberId;
+    if (!id) {
+        id = await crearSubscriberId(celular);
+    }
+
+    if (!id) {
         throw new Error(`No se encontró/creó el suscriptor de ManyChat para ${celular}`);
     }
 
     const resultado = await manychatRequest('/fb/sending/sendContent', {
-        subscriber_id: subscriberId,
+        subscriber_id: id,
         data: {
             version: 'v2',
             content: {
@@ -116,27 +88,30 @@ async function enviarContenidoManyChat({ celular, messages }) {
     if (resultado?.status !== 'success') {
         throw new Error(`ManyChat sendContent error: ${JSON.stringify(resultado)}`);
     }
+
+    return { subscriberId: id };
 }
 
 /**
  * Envía un mensaje de texto simple por WhatsApp/Messenger.
- * @param {{ celular: string, mensaje: string }} datos
+ * @param {{ celular: string, mensaje: string, subscriberId?: string|number }} datos
  */
-async function enviarMensajeManyChat({ celular, mensaje }) {
-    return enviarContenidoManyChat({ celular, messages: [{ type: 'text', text: mensaje }] });
+async function enviarMensajeManyChat({ celular, mensaje, subscriberId }) {
+    return enviarContenidoManyChat({ celular, messages: [{ type: 'text', text: mensaje }], subscriberId });
 }
 
 /**
  * Envía la imagen del bono junto con un mensaje de texto con los detalles de la compra.
- * @param {{ celular: string, mensaje: string, imagenUrl: string }} datos
+ * @param {{ celular: string, mensaje: string, imagenUrl: string, subscriberId?: string|number }} datos
  */
-async function enviarBonoManyChat({ celular, mensaje, imagenUrl }) {
+async function enviarBonoManyChat({ celular, mensaje, imagenUrl, subscriberId }) {
     return enviarContenidoManyChat({
         celular,
         messages: [
             { type: 'image', url: imagenUrl },
             { type: 'text', text: mensaje },
         ],
+        subscriberId,
     });
 }
 

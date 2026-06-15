@@ -20,7 +20,7 @@ async function calcularRanking(partidoId, limit = 10) {
     const { goles_local, goles_visitante } = partidoRows[0];
 
     const { rows } = await pool.query(
-        `SELECT u.id AS usuario_id, u.nombre, u.celular, p.fecha_registro
+        `SELECT u.id AS usuario_id, u.nombre, u.celular, u.manychat_subscriber_id, p.fecha_registro
          FROM pronosticos p
          JOIN usuarios u ON u.id = p.usuario_id
          WHERE p.partido_id = $1 AND p.goles_local = $2 AND p.goles_visitante = $3
@@ -36,6 +36,7 @@ async function calcularRanking(partidoId, limit = 10) {
             usuario_id: r.usuario_id,
             nombre: r.nombre,
             celular: r.celular,
+            manychat_subscriber_id: r.manychat_subscriber_id,
             fecha_registro: r.fecha_registro,
         })),
     };

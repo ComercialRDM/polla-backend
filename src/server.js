@@ -93,6 +93,12 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de reset_code:', err.message);
     }
 
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT`);
+    } catch (err) {
+        console.error('Error aplicando migración de manychat_subscriber_id:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

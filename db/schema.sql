@@ -27,6 +27,10 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code VARCHAR(6);
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_code_expira TIMESTAMPTZ;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_intentos INTEGER NOT NULL DEFAULT 0;
 
+-- ID del suscriptor de ManyChat asociado a este usuario, para enviarle mensajes
+-- por WhatsApp sin depender de la búsqueda por teléfono (no soportada por ManyChat)
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT;
+
 -- ============================================================
 -- Tabla: partidos
 -- ============================================================

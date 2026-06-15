@@ -16,7 +16,7 @@ async function revisarInicioPartidos() {
     for (const partido of partidos) {
         try {
             const { rows: participantes } = await pool.query(
-                `SELECT DISTINCT u.nombre, u.celular
+                `SELECT DISTINCT u.id, u.nombre, u.celular, u.manychat_subscriber_id
                  FROM transacciones t
                  JOIN usuarios u ON u.id = t.usuario_id
                  WHERE t.partido_id = $1 AND t.estado_pago = 'APROBADO'`,
@@ -28,7 +28,14 @@ async function revisarInicioPartidos() {
 
             for (const participante of participantes) {
                 try {
-                    await enviarMensajeManyChat({ celular: participante.celular, mensaje });
+                    const { subscriberId } = await enviarMensajeManyChat({
+                        celular: participante.celular,
+                        mensaje,
+                        subscriberId: participante.manychat_subscriber_id,
+                    });
+                    if (subscriberId && !participante.manychat_subscriber_id) {
+                        await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), participante.id]);
+                    }
                 } catch (err) {
                     console.error(`Error notificando inicio de partido a ${participante.celular}:`, err.response?.data || err.message);
                 }
@@ -58,7 +65,14 @@ async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisit
 
     for (const ganador of ganadores) {
         try {
-            await enviarMensajeManyChat({ celular: ganador.celular, mensaje });
+            const { subscriberId } = await enviarMensajeManyChat({
+                celular: ganador.celular,
+                mensaje,
+                subscriberId: ganador.manychat_subscriber_id,
+            });
+            if (subscriberId && !ganador.manychat_subscriber_id) {
+                await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), ganador.usuario_id]);
+            }
         } catch (err) {
             console.error(`Error enviando notificación ManyChat a ${ganador.celular}:`, err.message);
         }
