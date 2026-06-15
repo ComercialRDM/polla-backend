@@ -21,11 +21,14 @@ function firmar(data) {
 
 /**
  * Genera un token de sesión firmado para un administrador.
+ * Toda cuenta de `admin_usuarios` tiene rol "ADMIN" (no hay roles
+ * intermedios todavía); el rol queda explícito en el token para que el
+ * middleware lo verifique (RBAC).
  * @param {{ id: number, usuario: string }} datos
  * @returns {string}
  */
 function generarToken({ id, usuario }) {
-    const payload = JSON.stringify({ id, usuario, exp: Math.floor(Date.now() / 1000) + TOKEN_VIGENCIA_SEG });
+    const payload = JSON.stringify({ id, usuario, role: 'ADMIN', exp: Math.floor(Date.now() / 1000) + TOKEN_VIGENCIA_SEG });
     const payloadB64 = base64url(payload);
     return `${payloadB64}.${firmar(payloadB64)}`;
 }
@@ -33,7 +36,7 @@ function generarToken({ id, usuario }) {
 /**
  * Verifica un token de sesión y devuelve su payload si es válido y no ha expirado.
  * @param {string} token
- * @returns {{ id: number, usuario: string } | null}
+ * @returns {{ id: number, usuario: string, role: string } | null}
  */
 function verificarToken(token) {
     if (typeof token !== 'string' || !token.includes('.')) return null;
@@ -50,7 +53,7 @@ function verificarToken(token) {
     try {
         const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
         if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
-        return { id: payload.id, usuario: payload.usuario };
+        return { id: payload.id, usuario: payload.usuario, role: payload.role };
     } catch {
         return null;
     }

@@ -13,6 +13,7 @@ const webhooksRouter = require('./routes/webhooks');
 const pollaRouter = require('./routes/polla');
 const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
+const simuladorRouter = require('./routes/simulador');
 const partidosRouter = require('./routes/partidos');
 const { authLimiter, adminLimiter, transaccionesLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
@@ -57,6 +58,7 @@ app.use('/api/webhooks', webhooksRouter);
 app.use('/api/polla', pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
+app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/partidos', partidosRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
@@ -149,6 +151,20 @@ app.listen(PORT, async () => {
         }
     } catch (err) {
         console.error('Error aplicando migración de admin_usuarios:', err.message);
+    }
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS manychat_metricas_diarias (
+                fecha               DATE PRIMARY KEY,
+                mensajes_enviados   INTEGER NOT NULL DEFAULT 0,
+                aperturas           INTEGER NOT NULL DEFAULT 0,
+                clics               INTEGER NOT NULL DEFAULT 0,
+                fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error aplicando migración de manychat_metricas_diarias:', err.message);
     }
 
     iniciarMonitorPartidos();

@@ -122,6 +122,19 @@ CREATE INDEX IF NOT EXISTS idx_pronosticos_marcador ON pronosticos (partido_id, 
 CREATE INDEX IF NOT EXISTS idx_pronosticos_fecha_registro ON pronosticos (fecha_registro);
 
 -- ============================================================
+-- Tabla: manychat_metricas_diarias
+-- Métricas diarias de campañas de ManyChat (WhatsApp), usadas por el
+-- simulador de ingresos del panel admin (solo lectura para el admin).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS manychat_metricas_diarias (
+    fecha               DATE PRIMARY KEY,
+    mensajes_enviados   INTEGER NOT NULL DEFAULT 0,
+    aperturas           INTEGER NOT NULL DEFAULT 0,
+    clics               INTEGER NOT NULL DEFAULT 0,
+    fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)

@@ -9,9 +9,13 @@ const { notificarGanadoresDelGol } = require('../services/notificacionesService'
 const router = express.Router();
 
 const FUTBOL_WEBHOOK_SECRET = process.env.FUTBOL_WEBHOOK_SECRET;
+const MANYCHAT_METRICAS_SECRET = process.env.MANYCHAT_METRICAS_SECRET;
 
 if (!FUTBOL_WEBHOOK_SECRET) {
     console.warn('FUTBOL_WEBHOOK_SECRET no está configurado: /api/webhooks/partido-en-vivo queda sin protección por secreto.');
+}
+if (!MANYCHAT_METRICAS_SECRET) {
+    console.warn('MANYCHAT_METRICAS_SECRET no está configurado: /api/webhooks/manychat-metricas queda sin protección por secreto.');
 }
 
 // Comparación de igualdad en tiempo constante para strings de distinta longitud
@@ -140,6 +144,46 @@ router.post('/partido-en-vivo', async (req, res) => {
     } catch (err) {
         console.error('Error en webhook partido-en-vivo:', err);
         return res.status(200).json({ success: false, error: 'error interno, evento recibido' });
+    }
+});
+
+// POST /api/webhooks/manychat-metricas
+// Recibe métricas diarias de campañas de ManyChat (mensajes enviados, tasa
+// de apertura, clics al link de la polla) para alimentar el simulador de
+// ingresos del panel admin. Protegido por secreto compartido (no es un
+// usuario ni un admin autenticado: es una llamada servidor-a-servidor de
+// ManyChat), separado de las rutas /api/admin (protegidas por RBAC).
+// Body: { fecha: "YYYY-MM-DD", mensajes_enviados, aperturas, clics }
+router.post('/manychat-metricas', async (req, res) => {
+    if (MANYCHAT_METRICAS_SECRET) {
+        const secretRecibido = req.headers['x-webhook-secret'];
+        if (!compararSeguro(secretRecibido, MANYCHAT_METRICAS_SECRET)) {
+            return res.status(401).json({ success: false, error: 'No autorizado' });
+        }
+    }
+
+    const { fecha, mensajes_enviados, aperturas, clics } = req.body || {};
+
+    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+        return res.status(400).json({ success: false, error: 'Falta "fecha" en formato YYYY-MM-DD' });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO manychat_metricas_diarias (fecha, mensajes_enviados, aperturas, clics, fecha_actualizacion)
+             VALUES ($1, $2, $3, $4, now())
+             ON CONFLICT (fecha) DO UPDATE SET
+                mensajes_enviados = EXCLUDED.mensajes_enviados,
+                aperturas = EXCLUDED.aperturas,
+                clics = EXCLUDED.clics,
+                fecha_actualizacion = now()`,
+            [fecha, Number(mensajes_enviados) || 0, Number(aperturas) || 0, Number(clics) || 0]
+        );
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en webhook manychat-metricas:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 
