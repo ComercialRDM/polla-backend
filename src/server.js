@@ -14,6 +14,7 @@ const pollaRouter = require('./routes/polla');
 const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 const simuladorRouter = require('./routes/simulador');
+const localRouter = require('./routes/local');
 const partidosRouter = require('./routes/partidos');
 const { authLimiter, adminLimiter, transaccionesLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
@@ -59,6 +60,7 @@ app.use('/api/polla', pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
+app.use('/api/local', adminLimiter, localRouter);
 app.use('/api/partidos', partidosRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
@@ -165,6 +167,45 @@ app.listen(PORT, async () => {
         `);
     } catch (err) {
         console.error('Error aplicando migración de manychat_metricas_diarias:', err.message);
+    }
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS local_usuarios (
+                id              SERIAL PRIMARY KEY,
+                usuario         TEXT UNIQUE NOT NULL,
+                password_hash   TEXT NOT NULL,
+                nombre_local    TEXT,
+                activo          BOOLEAN NOT NULL DEFAULT TRUE,
+                fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+
+        // Si la tabla está vacía, se crean las cuentas de los locales a partir de
+        // LOCAL_SEED_USUARIO_1..5 / LOCAL_SEED_PASSWORD_1..5 / LOCAL_SEED_NOMBRE_1..5
+        const { rows } = await pool.query('SELECT COUNT(*)::int AS total FROM local_usuarios');
+        if (rows[0].total === 0) {
+            let creadas = 0;
+            for (let i = 1; i <= 5; i++) {
+                const usuario = process.env[`LOCAL_SEED_USUARIO_${i}`];
+                const password = process.env[`LOCAL_SEED_PASSWORD_${i}`];
+                if (usuario && password) {
+                    const passwordHash = await bcrypt.hash(password, 10);
+                    await pool.query(
+                        'INSERT INTO local_usuarios (usuario, password_hash, nombre_local) VALUES ($1, $2, $3)',
+                        [usuario, passwordHash, process.env[`LOCAL_SEED_NOMBRE_${i}`] || null]
+                    );
+                    creadas += 1;
+                }
+            }
+            if (creadas > 0) {
+                console.log(`${creadas} cuenta(s) de local creada(s) para /redimircodigordm`);
+            } else {
+                console.warn('No hay cuentas en local_usuarios. Define LOCAL_SEED_USUARIO_1..5 y LOCAL_SEED_PASSWORD_1..5 para crear las cuentas de los locales.');
+            }
+        }
+    } catch (err) {
+        console.error('Error aplicando migración de local_usuarios:', err.message);
     }
 
     iniciarMonitorPartidos();

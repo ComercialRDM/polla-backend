@@ -135,6 +135,21 @@ CREATE TABLE IF NOT EXISTS manychat_metricas_diarias (
 );
 
 -- ============================================================
+-- Tabla: local_usuarios
+-- Cuentas individuales (una por local) para redimir bonos de clientes en
+-- /redimircodigordm. Separadas de admin_usuarios: solo pueden escanear y
+-- consumir bonos, no acceden al panel de administración.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS local_usuarios (
+    id              SERIAL PRIMARY KEY,
+    usuario         TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    nombre_local    TEXT,
+    activo          BOOLEAN NOT NULL DEFAULT TRUE,
+    fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)
