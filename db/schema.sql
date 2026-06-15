@@ -100,6 +100,10 @@ ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS comprobante_mime VARCHAR(50);
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referido_por_token UUID;
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referido_bono_otorgado BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Redención del bono en el local: se marca al escanear el código QR del bono
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido_en TIMESTAMPTZ;
+
 -- ============================================================
 -- Tabla: pronosticos
 -- ============================================================

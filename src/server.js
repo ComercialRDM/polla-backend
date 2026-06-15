@@ -110,6 +110,13 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de google_id:', err.message);
     }
 
+    try {
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido BOOLEAN NOT NULL DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido_en TIMESTAMPTZ`);
+    } catch (err) {
+        console.error('Error aplicando migración de bono_consumido:', err.message);
+    }
+
     if (!process.env.GOOGLE_CLIENT_ID) {
         console.warn('GOOGLE_CLIENT_ID no está configurado: el login con Google no funcionará.');
     }

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
+const QRCode = require('qrcode');
 
 const TEMPLATE_PATH = path.join(__dirname, '..', '..', 'assets', 'bono_template.jpg');
 
@@ -21,6 +22,10 @@ const COVER = {
     nombre: { x: 700, y: 1035, w: 400, h: 50, color: '#FEE580' },
 };
 
+// Código QR (token de acceso del bono) en la esquina inferior derecha, para que
+// el local lo escanee y marque el bono como consumido
+const QR = { x: ANCHO - 240, y: ALTO - 240, size: 200, padding: 10 };
+
 /**
  * Genera (si no existe) un template placeholder para el bono.
  */
@@ -39,11 +44,12 @@ async function asegurarTemplate() {
 }
 
 /**
- * Genera la imagen del bono (PNG) con el valor y el nombre del cliente incrustados.
- * @param {{ nombre: string, saldoBono: number }} datos
+ * Genera la imagen del bono (PNG) con el valor, el nombre del cliente y un código QR
+ * (token de acceso) incrustados. El QR lo escanea el local para marcar el bono como usado.
+ * @param {{ nombre: string, saldoBono: number, tokenAcceso: string }} datos
  * @returns {Promise<Buffer>}
  */
-async function generarImagenBono({ nombre, saldoBono }) {
+async function generarImagenBono({ nombre, saldoBono, tokenAcceso }) {
     await asegurarTemplate();
 
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
@@ -60,9 +66,29 @@ async function generarImagenBono({ nombre, saldoBono }) {
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="middle">${escapeXml(nombre)}</text>
     </svg>`;
 
+    const composite = [{ input: Buffer.from(overlaySvg), top: 0, left: 0 }];
+
+    if (tokenAcceso) {
+        const qrBuffer = await QRCode.toBuffer(tokenAcceso, {
+            type: 'png',
+            width: QR.size - QR.padding * 2,
+            margin: 0,
+            color: { dark: '#1a1a1a', light: '#ffffff' },
+        });
+
+        // Fondo blanco con borde para que el QR resalte sobre la plantilla
+        const fondoQrSvg = `
+        <svg width="${QR.size}" height="${QR.size}" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100%" height="100%" rx="12" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+        </svg>`;
+
+        composite.push({ input: Buffer.from(fondoQrSvg), top: QR.y, left: QR.x });
+        composite.push({ input: qrBuffer, top: QR.y + QR.padding, left: QR.x + QR.padding });
+    }
+
     const buffer = await sharp(TEMPLATE_PATH)
         .resize(ANCHO, ALTO)
-        .composite([{ input: Buffer.from(overlaySvg), top: 0, left: 0 }])
+        .composite(composite)
         .png()
         .toBuffer();
 

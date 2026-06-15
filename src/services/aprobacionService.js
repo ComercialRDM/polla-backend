@@ -64,6 +64,7 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
             const bonoBuffer = await generarImagenBono({
                 nombre: usuario.nombre,
                 saldoBono: transaccion.saldo_bono,
+                tokenAcceso: transaccion.token_acceso,
             });
 
             await enviarCorreoBono({

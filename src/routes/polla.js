@@ -30,7 +30,7 @@ router.get('/bono/:token', async (req, res) => {
         // El bono no cambia una vez aprobada la transacción: se cachea para evitar
         // regenerar la imagen (operación costosa con sharp) en cada visualización.
         const bonoBuffer = await getOrSet(`bono:${token}`, 24 * 60 * 60 * 1000, () =>
-            generarImagenBono({ nombre, saldoBono: saldo_bono })
+            generarImagenBono({ nombre, saldoBono: saldo_bono, tokenAcceso: token })
         );
 
         res.set('Content-Type', 'image/png');
