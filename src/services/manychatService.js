@@ -68,8 +68,7 @@ async function obtenerSubscriberId(celular) {
 
     if (!subscriberId && suscriptorYaExiste(respuesta)) {
         const busqueda = await manychatGet('/fb/subscriber/findBySystemField', {
-            system_field_name: 'phone',
-            system_field_value: whatsappPhone,
+            phone: whatsappPhone,
         });
         subscriberId = busqueda?.data?.id;
 
