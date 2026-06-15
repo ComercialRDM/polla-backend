@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
+const { obtenerSaldoUsuario } = require('../services/walletService');
+const { CUPO_VALOR } = require('../config/planes');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
@@ -42,7 +44,7 @@ router.get('/bono/:token', async (req, res) => {
 });
 
 // GET /api/polla/info?token_acceso=
-// Recupera los datos de la transacción y del partido a partir del token (link de acceso por correo)
+// Recupera el monedero de cupos del usuario y la lista de partidos activos a partir del token
 router.get('/info', async (req, res) => {
     const { token_acceso } = req.query;
 
@@ -52,10 +54,9 @@ router.get('/info', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.*, u.nombre, u.equipos_favoritos, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio, p.estado AS estado_partido
+            `SELECT t.usuario_id, u.nombre, u.equipos_favoritos
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
-             JOIN partidos p ON p.id = t.partido_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
              LIMIT 1`,
             [token_acceso]
@@ -65,18 +66,43 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const t = rows[0];
+        const { usuario_id, nombre, equipos_favoritos } = rows[0];
+
+        const saldo = await obtenerSaldoUsuario(usuario_id);
+
+        const { rows: partidoRows } = await pool.query(
+            `SELECT p.id, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio, p.estado AS estado_partido,
+                    pr.goles_local AS pronostico_local, pr.goles_visitante AS pronostico_visitante
+             FROM partidos p
+             LEFT JOIN pronosticos pr ON pr.partido_id = p.id AND pr.usuario_id = $1
+             WHERE p.estado = 'activo'
+             ORDER BY p.fecha_hora_inicio ASC`,
+            [usuario_id]
+        );
+
+        const partidos = partidoRows.map((p) => ({
+            partido_id: p.id,
+            equipo_local: p.equipo_local,
+            equipo_visitante: p.equipo_visitante,
+            fecha_hora_inicio: p.fecha_hora_inicio,
+            estado_partido: p.estado_partido,
+            ya_pronosticado: p.pronostico_local !== null,
+            pronostico: p.pronostico_local !== null
+                ? { local: p.pronostico_local, visitante: p.pronostico_visitante }
+                : null,
+        }));
+
         return res.json({
             acceso: true,
-            nombre: t.nombre,
-            partido_id: t.partido_id,
-            equipo_local: t.equipo_local,
-            equipo_visitante: t.equipo_visitante,
-            fecha_hora_inicio: t.fecha_hora_inicio,
-            estado_partido: t.estado_partido,
-            intentos_disponibles: t.intentos_totales - t.intentos_usados,
-            intentos_totales: t.intentos_totales,
-            equipos_favoritos: t.equipos_favoritos || [],
+            nombre,
+            equipos_favoritos: equipos_favoritos || [],
+            cupos_totales: saldo.cuposTotales,
+            cupos_usados: saldo.cuposUsados,
+            cupos_disponibles: saldo.cuposDisponibles,
+            dinero_recargado: saldo.dineroRecargado,
+            dinero_disponible: saldo.dineroDisponible,
+            cupo_valor: CUPO_VALOR,
+            partidos,
         });
     } catch (err) {
         console.error('Error en /polla/info:', err);
@@ -158,31 +184,40 @@ router.put('/equipos-favoritos', async (req, res) => {
 });
 
 // POST /api/polla/votar
+// Registra el pronóstico (un marcador) de un usuario para un partido, consumiendo 1 cupo de su monedero.
 router.post('/votar', async (req, res) => {
-    const { token_acceso, partido_id, marcadores } = req.body;
+    const { token_acceso, partido_id, local, visitante } = req.body;
 
-    if (!token_acceso || !partido_id || !Array.isArray(marcadores) || marcadores.length === 0) {
-        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
-    }
-
-    for (const m of marcadores) {
-        if (
-            typeof m.local !== 'number' || typeof m.visitante !== 'number' ||
-            m.local < 0 || m.visitante < 0 ||
-            !Number.isInteger(m.local) || !Number.isInteger(m.visitante)
-        ) {
-            return res.status(400).json({ success: false, error: 'Marcadores inválidos' });
-        }
+    if (
+        !token_acceso || !partido_id ||
+        typeof local !== 'number' || typeof visitante !== 'number' ||
+        local < 0 || visitante < 0 ||
+        !Number.isInteger(local) || !Number.isInteger(visitante)
+    ) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos o marcador inválido' });
     }
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // Bloquear la fila de la transacción para evitar condiciones de carrera
+        // Resolver el usuario a partir del token
+        const { rows: tokenRows } = await client.query(
+            `SELECT usuario_id FROM transacciones WHERE token_acceso = $1 AND estado_pago = 'APROBADO' LIMIT 1`,
+            [token_acceso]
+        );
+
+        if (tokenRows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Acceso no válido' });
+        }
+
+        const { usuario_id } = tokenRows[0];
+
+        // Bloquear las transacciones aprobadas del usuario para serializar el cálculo del monedero
         const { rows: transaccionRows } = await client.query(
-            `SELECT * FROM transacciones WHERE token_acceso = $1 AND partido_id = $2 AND estado_pago = 'APROBADO' FOR UPDATE`,
-            [token_acceso, partido_id]
+            `SELECT id, valor_pagado FROM transacciones WHERE usuario_id = $1 AND estado_pago = 'APROBADO' FOR UPDATE`,
+            [usuario_id]
         );
 
         if (transaccionRows.length === 0) {
@@ -190,11 +225,7 @@ router.post('/votar', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Acceso no válido' });
         }
 
-        const transaccion = transaccionRows[0];
-
-        // Verificar el partido y la hora límite (hora del servidor UTC como única verdad).
-        // Sin FOR UPDATE: solo lectura, no es necesario bloquear la fila del partido y
-        // evita serializar los votos de todos los usuarios de un mismo partido.
+        // Verificar el partido y la hora límite (hora del servidor UTC como única verdad)
         const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1', [partido_id]);
         if (partidoRows.length === 0) {
             await client.query('ROLLBACK');
@@ -211,26 +242,38 @@ router.post('/votar', async (req, res) => {
             return res.status(403).json({ success: false, error: 'La votación para este partido ya está cerrada' });
         }
 
-        // Validar que los marcadores no superen los intentos disponibles
-        const intentosDisponibles = transaccion.intentos_totales - transaccion.intentos_usados;
-        if (marcadores.length > intentosDisponibles) {
+        // No permitir más de un pronóstico por partido
+        const { rows: existeRows } = await client.query(
+            'SELECT id FROM pronosticos WHERE usuario_id = $1 AND partido_id = $2',
+            [usuario_id, partido_id]
+        );
+        if (existeRows.length > 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ success: false, error: 'No tienes suficientes intentos disponibles' });
+            return res.status(400).json({ success: false, error: 'Ya registraste tu pronóstico para este partido' });
         }
 
-        // Insertar pronósticos
-        for (const m of marcadores) {
-            await client.query(
-                `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [transaccion.id, transaccion.usuario_id, partido_id, m.local, m.visitante]
-            );
+        // Validar que el usuario tenga al menos 1 cupo disponible
+        const cuposTotales = transaccionRows.reduce(
+            (acc, t) => acc + Math.floor(t.valor_pagado / CUPO_VALOR),
+            0
+        );
+        const { rows: usadosRows } = await client.query(
+            'SELECT COUNT(*)::int AS cupos_usados FROM pronosticos WHERE usuario_id = $1',
+            [usuario_id]
+        );
+        const cuposUsados = usadosRows[0].cupos_usados;
+        const cuposDisponibles = Math.max(cuposTotales - cuposUsados, 0);
+
+        if (cuposDisponibles < 1) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'No tienes cupos disponibles. Recarga para seguir pronosticando.' });
         }
 
-        // Sumar intentos usados
+        // Insertar el pronóstico (se asocia a una de las transacciones aprobadas del usuario para mantener la FK)
         await client.query(
-            'UPDATE transacciones SET intentos_usados = intentos_usados + $1 WHERE id = $2',
-            [marcadores.length, transaccion.id]
+            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [transaccionRows[0].id, usuario_id, partido_id, local, visitante]
         );
 
         await client.query('COMMIT');
@@ -240,10 +283,15 @@ router.post('/votar', async (req, res) => {
         invalidate(`pronosticos:${partido_id}`);
         notificar(partido_id);
 
+        const dineroRecargado = transaccionRows.reduce((acc, t) => acc + t.valor_pagado, 0);
+        const nuevosCuposUsados = cuposUsados + 1;
+        const nuevosCuposDisponibles = Math.max(cuposTotales - nuevosCuposUsados, 0);
+        const nuevoDineroDisponible = Math.max(dineroRecargado - nuevosCuposUsados * CUPO_VALOR, 0);
+
         try {
             const { rows: usuarioRows } = await pool.query(
                 'SELECT nombre, correo FROM usuarios WHERE id = $1',
-                [transaccion.usuario_id]
+                [usuario_id]
             );
             const usuario = usuarioRows[0];
             await enviarCorreoNotificacionVoto({
@@ -251,7 +299,8 @@ router.post('/votar', async (req, res) => {
                 correo: usuario.correo,
                 equipoLocal: partido.equipo_local,
                 equipoVisitante: partido.equipo_visitante,
-                marcadores,
+                local,
+                visitante,
                 fecha: new Date(),
             });
         } catch (errCorreo) {
@@ -260,8 +309,8 @@ router.post('/votar', async (req, res) => {
 
         return res.json({
             success: true,
-            pronosticos_registrados: marcadores.length,
-            intentos_disponibles: intentosDisponibles - marcadores.length,
+            cupos_disponibles: nuevosCuposDisponibles,
+            dinero_disponible: nuevoDineroDisponible,
         });
     } catch (err) {
         await client.query('ROLLBACK');

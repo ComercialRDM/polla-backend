@@ -50,23 +50,19 @@ async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tok
 }
 
 /**
- * Notifica al administrador los pronósticos que un usuario acaba de registrar.
- * @param {{ nombre: string, correo: string, equipoLocal: string, equipoVisitante: string, marcadores: {local: number, visitante: number}[], fecha: Date }} datos
+ * Notifica al administrador el pronóstico que un usuario acaba de registrar.
+ * @param {{ nombre: string, correo: string, equipoLocal: string, equipoVisitante: string, local: number, visitante: number, fecha: Date }} datos
  */
-async function enviarCorreoNotificacionVoto({ nombre, correo, equipoLocal, equipoVisitante, marcadores, fecha }) {
+async function enviarCorreoNotificacionVoto({ nombre, correo, equipoLocal, equipoVisitante, local, visitante, fecha }) {
     const transporter = crearTransporter();
     const destinatario = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
     const fechaTexto = fecha.toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-
-    const filasMarcadores = marcadores
-        .map((m) => `<li>${equipoLocal} ${m.local} - ${m.visitante} ${equipoVisitante}</li>`)
-        .join('');
 
     const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
         <h2 style="color: #f59e0b;">Nuevo pronóstico registrado</h2>
         <p><strong>${nombre}</strong> (${correo}) registró el siguiente pronóstico para <strong>${equipoLocal} vs ${equipoVisitante}</strong>:</p>
-        <ul>${filasMarcadores}</ul>
+        <ul><li>${equipoLocal} ${local} - ${visitante} ${equipoVisitante}</li></ul>
         <p>Fecha y hora (Colombia): <strong>${fechaTexto}</strong></p>
     </div>`;
 
