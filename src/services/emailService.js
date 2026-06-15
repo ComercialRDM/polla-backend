@@ -103,4 +103,40 @@ async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoV
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra };
+/**
+ * Envía el respaldo periódico de la base de datos (JSON comprimido) al correo
+ * del administrador.
+ * @param {{ destinatario: string, filename: string, buffer: Buffer, resumen: Record<string, number> }} datos
+ */
+async function enviarCorreoBackup({ destinatario, filename, buffer, resumen }) {
+    const transporter = crearTransporter();
+    const fechaTexto = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+
+    const filas = Object.entries(resumen)
+        .map(([tabla, cantidad]) => `<li>${tabla}: ${cantidad} fila(s)</li>`)
+        .join('');
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h2 style="color: #f59e0b;">Respaldo automático de la base de datos</h2>
+        <p>Generado: <strong>${fechaTexto}</strong> (Colombia)</p>
+        <ul>${filas}</ul>
+        <p>Adjunto encontrarás el archivo <strong>${filename}</strong> con el contenido completo (JSON comprimido).</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `Respaldo Polla Mundialista - ${fechaTexto}`,
+        html,
+        attachments: [
+            {
+                filename,
+                content: buffer,
+                contentType: 'application/gzip',
+            },
+        ],
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup };
