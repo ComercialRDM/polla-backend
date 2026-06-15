@@ -19,4 +19,14 @@ const adminLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
 });
 
-module.exports = { authLimiter, adminLimiter };
+// Limita la creación de transacciones (endpoints públicos sin autenticación)
+// para frenar el registro masivo de usuarios/transacciones y el abuso de Wompi.
+const transaccionesLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter };

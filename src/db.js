@@ -8,7 +8,10 @@ const { Pool } = require('pg');
 // Si ninguna está definida, se usa rejectUnauthorized: false (cifrado pero sin
 // validar el emisor) como hasta ahora, para no romper el despliegue.
 function sslConfig() {
-    if (process.env.DB_SSL !== 'true') return false;
+    if (process.env.DB_SSL !== 'true') {
+        console.warn('DB_SSL no está en "true": la conexión a Postgres no usará TLS. Verifica esta variable en producción.');
+        return false;
+    }
     if (process.env.DB_CA_CERT) {
         return { ca: process.env.DB_CA_CERT, rejectUnauthorized: true };
     }

@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const pool = require('../db');
 const { validarFirmaWebhook } = require('../services/wompiService');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
@@ -8,6 +9,18 @@ const { notificarGanadoresDelGol } = require('../services/notificacionesService'
 const router = express.Router();
 
 const FUTBOL_WEBHOOK_SECRET = process.env.FUTBOL_WEBHOOK_SECRET;
+
+if (!FUTBOL_WEBHOOK_SECRET) {
+    console.warn('FUTBOL_WEBHOOK_SECRET no está configurado: /api/webhooks/partido-en-vivo queda sin protección por secreto.');
+}
+
+// Comparación de igualdad en tiempo constante para strings de distinta longitud
+function compararSeguro(a, b) {
+    const bufA = Buffer.from(String(a || ''));
+    const bufB = Buffer.from(String(b || ''));
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+}
 
 // POST /api/webhooks/wompi
 router.post('/wompi', async (req, res) => {
@@ -74,7 +87,7 @@ router.post('/wompi', async (req, res) => {
 router.post('/partido-en-vivo', async (req, res) => {
     if (FUTBOL_WEBHOOK_SECRET) {
         const secretRecibido = req.headers['x-webhook-secret'];
-        if (secretRecibido !== FUTBOL_WEBHOOK_SECRET) {
+        if (!compararSeguro(secretRecibido, FUTBOL_WEBHOOK_SECRET)) {
             return res.status(401).json({ success: false, error: 'No autorizado' });
         }
     }
