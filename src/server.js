@@ -5,6 +5,7 @@ const Sentry = require('./instrument');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const bcrypt = require('bcryptjs');
 
 const pool = require('./db');
 const transaccionesRouter = require('./routes/transacciones');
@@ -101,6 +102,36 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT`);
     } catch (err) {
         console.error('Error aplicando migración de manychat_subscriber_id:', err.message);
+    }
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin_usuarios (
+                id SERIAL PRIMARY KEY,
+                usuario TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                activo BOOLEAN NOT NULL DEFAULT TRUE,
+                fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+
+        // Si la tabla está vacía, se crea la primera cuenta a partir de
+        // ADMIN_SEED_USUARIO / ADMIN_SEED_PASSWORD para no quedar sin acceso.
+        const { rows } = await pool.query('SELECT COUNT(*)::int AS total FROM admin_usuarios');
+        if (rows[0].total === 0) {
+            if (process.env.ADMIN_SEED_USUARIO && process.env.ADMIN_SEED_PASSWORD) {
+                const passwordHash = await bcrypt.hash(process.env.ADMIN_SEED_PASSWORD, 10);
+                await pool.query(
+                    'INSERT INTO admin_usuarios (usuario, password_hash) VALUES ($1, $2)',
+                    [process.env.ADMIN_SEED_USUARIO, passwordHash]
+                );
+                console.log(`Cuenta de administrador inicial creada para "${process.env.ADMIN_SEED_USUARIO}"`);
+            } else {
+                console.warn('No hay cuentas en admin_usuarios. Define ADMIN_SEED_USUARIO y ADMIN_SEED_PASSWORD para crear la primera, o usa temporalmente ADMIN_API_KEY.');
+            }
+        }
+    } catch (err) {
+        console.error('Error aplicando migración de admin_usuarios:', err.message);
     }
 
     iniciarMonitorPartidos();

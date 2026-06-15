@@ -1,12 +1,45 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
+const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra } = require('../services/emailService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
 const router = express.Router();
+
+// POST /api/admin/login - autenticación con cuenta individual (usuario + contraseña)
+router.post('/login', async (req, res) => {
+    const { usuario, password } = req.body;
+
+    if (!usuario || !password) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            'SELECT id, usuario, password_hash FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
+            [usuario]
+        );
+
+        if (rows.length === 0) {
+            return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos' });
+        }
+
+        const valido = await bcrypt.compare(password, rows[0].password_hash);
+        if (!valido) {
+            return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos' });
+        }
+
+        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario });
+        return res.json({ success: true, token, usuario: rows[0].usuario });
+    } catch (err) {
+        console.error('Error en /admin/login:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
 
 router.use(adminAuth);
 

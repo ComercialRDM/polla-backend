@@ -32,6 +32,19 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_intentos INTEGER NOT NULL DE
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT;
 
 -- ============================================================
+-- Tabla: admin_usuarios
+-- Cuentas individuales para acceder al panel de administración
+-- (reemplaza la clave única ADMIN_API_KEY)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS admin_usuarios (
+    id              SERIAL PRIMARY KEY,
+    usuario         TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    activo          BOOLEAN NOT NULL DEFAULT TRUE,
+    fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Tabla: partidos
 -- ============================================================
 CREATE TABLE IF NOT EXISTS partidos (
