@@ -68,9 +68,10 @@ async function obtenerSubscriberId(celular) {
 
     if (!subscriberId && suscriptorYaExiste(respuesta)) {
         const busqueda = await manychatGet('/fb/subscriber/findBySystemField', {
-            phone: whatsappPhone,
+            phone: formatearCelularWhatsApp(celular),
         });
-        subscriberId = busqueda?.data?.id;
+        const encontrado = Array.isArray(busqueda?.data) ? busqueda.data[0] : busqueda?.data;
+        subscriberId = encontrado?.id;
 
         if (!subscriberId) {
             console.error('No se pudo encontrar el suscriptor existente de ManyChat para', celular, JSON.stringify(busqueda));
