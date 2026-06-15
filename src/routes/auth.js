@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
 
@@ -8,6 +9,17 @@ const router = express.Router();
 
 const RESET_CODE_VIGENCIA_MIN = 10;
 const RESET_INTENTOS_MAX = 5;
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Verifica el ID token de Google y devuelve su payload (sub, email, name, email_verified)
+async function verificarTokenGoogle(credential) {
+    const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    return ticket.getPayload();
+}
 
 function normalizarCelular(celular) {
     return String(celular || '').replace(/[^0-9+]/g, '').trim();
@@ -201,6 +213,114 @@ router.post('/restablecer-password', async (req, res) => {
     } catch (err) {
         console.error('Error en /auth/restablecer-password:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/auth/google - inicia sesión (o detecta cuenta nueva) con un ID token de Google
+router.post('/google', async (req, res) => {
+    const { credential } = req.body;
+
+    if (!credential) {
+        return res.status(400).json({ success: false, error: 'Falta el token de Google' });
+    }
+    if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.status(500).json({ success: false, error: 'Login con Google no configurado' });
+    }
+
+    try {
+        const payload = await verificarTokenGoogle(credential);
+        const googleId = payload.sub;
+        const correo = payload.email;
+        const nombre = payload.name || '';
+
+        const { rows: porGoogleId } = await pool.query(
+            'SELECT id, nombre, celular, equipos_favoritos FROM usuarios WHERE google_id = $1',
+            [googleId]
+        );
+        if (porGoogleId.length > 0) {
+            return res.json({ success: true, usuario: porGoogleId[0] });
+        }
+
+        // Si ya existe una cuenta con ese correo verificado, se vincula a la cuenta de Google
+        if (correo && payload.email_verified) {
+            const { rows: porCorreo } = await pool.query(
+                'SELECT id, nombre, celular, equipos_favoritos FROM usuarios WHERE correo = $1',
+                [correo]
+            );
+            if (porCorreo.length > 0) {
+                await pool.query('UPDATE usuarios SET google_id = $1 WHERE id = $2', [googleId, porCorreo[0].id]);
+                return res.json({ success: true, usuario: porCorreo[0] });
+            }
+        }
+
+        // Cuenta nueva: el frontend debe pedir el celular antes de crearla
+        return res.json({
+            success: true,
+            nuevo: true,
+            datos: { nombre, correo: correo || '' },
+        });
+    } catch (err) {
+        console.error('Error en /auth/google:', err);
+        return res.status(401).json({ success: false, error: 'Token de Google inválido' });
+    }
+});
+
+// POST /api/auth/google/completar - crea (o vincula) la cuenta de un usuario nuevo de Google con su celular
+router.post('/google/completar', async (req, res) => {
+    const { credential, celular, equipos_favoritos } = req.body;
+    const celularNormalizado = normalizarCelular(celular);
+
+    if (!credential) {
+        return res.status(400).json({ success: false, error: 'Falta el token de Google' });
+    }
+    if (!celularNormalizado || celularNormalizado.length < 7) {
+        return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
+    }
+    if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.status(500).json({ success: false, error: 'Login con Google no configurado' });
+    }
+
+    const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
+
+    try {
+        const payload = await verificarTokenGoogle(credential);
+        const googleId = payload.sub;
+        const correo = payload.email_verified ? payload.email : null;
+        const nombre = payload.name || '';
+
+        const { rows: existentes } = await pool.query(
+            `SELECT id, google_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            [celularNormalizado]
+        );
+
+        let usuario;
+        if (existentes.length > 0) {
+            if (existentes[0].google_id && existentes[0].google_id !== googleId) {
+                return res.status(409).json({ success: false, error: 'Este celular ya está vinculado a otra cuenta de Google.' });
+            }
+
+            const { rows } = await pool.query(
+                `UPDATE usuarios SET google_id = $1 WHERE id = $2
+                 RETURNING id, nombre, celular, equipos_favoritos`,
+                [googleId, existentes[0].id]
+            );
+            usuario = rows[0];
+        } else {
+            const { rows } = await pool.query(
+                `INSERT INTO usuarios (nombre, correo, celular, google_id, equipos_favoritos) VALUES ($1, $2, $3, $4, $5)
+                 RETURNING id, nombre, celular, equipos_favoritos`,
+                [nombre || 'Usuario', correo, celularNormalizado, googleId, equipos]
+            );
+            usuario = rows[0];
+        }
+
+        return res.json({ success: true, usuario });
+    } catch (err) {
+        console.error('Error en /auth/google/completar:', err);
+        if (err.code === '23505') {
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este celular o correo.' });
+        }
+        return res.status(401).json({ success: false, error: 'Token de Google inválido' });
     }
 });
 

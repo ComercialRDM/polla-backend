@@ -105,6 +105,16 @@ app.listen(PORT, async () => {
     }
 
     try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE`);
+    } catch (err) {
+        console.error('Error aplicando migración de google_id:', err.message);
+    }
+
+    if (!process.env.GOOGLE_CLIENT_ID) {
+        console.warn('GOOGLE_CLIENT_ID no está configurado: el login con Google no funcionará.');
+    }
+
+    try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS admin_usuarios (
                 id SERIAL PRIMARY KEY,

@@ -31,6 +31,9 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_intentos INTEGER NOT NULL DE
 -- por WhatsApp sin depender de la búsqueda por teléfono (no soportada por ManyChat)
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT;
 
+-- ID de cuenta de Google (sub del token) para login con Google
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
+
 -- ============================================================
 -- Tabla: admin_usuarios
 -- Cuentas individuales para acceder al panel de administración
