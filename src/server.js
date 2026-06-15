@@ -19,6 +19,10 @@ const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
 const app = express();
 
+// Render coloca la app detrás de un proxy que agrega X-Forwarded-For; sin esto,
+// express-rate-limit rechaza las peticiones por considerarlo un header no confiable.
+app.set('trust proxy', 1);
+
 // Orígenes permitidos para CORS (separados por coma). Si no se define, permite todos
 // los orígenes (modo permisivo de respaldo, pero se recomienda configurar FRONTEND_URL).
 const origenesPermitidos = (process.env.FRONTEND_URL || '')
