@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
-const { invalidate } = require('../utils/cache');
+const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
 const router = express.Router();
@@ -26,7 +26,12 @@ router.get('/bono/:token', async (req, res) => {
         }
 
         const { nombre, saldo_bono } = rows[0];
-        const bonoBuffer = await generarImagenBono({ nombre, saldoBono: saldo_bono });
+
+        // El bono no cambia una vez aprobada la transacción: se cachea para evitar
+        // regenerar la imagen (operación costosa con sharp) en cada visualización.
+        const bonoBuffer = await getOrSet(`bono:${token}`, 24 * 60 * 60 * 1000, () =>
+            generarImagenBono({ nombre, saldoBono: saldo_bono })
+        );
 
         res.set('Content-Type', 'image/png');
         return res.send(bonoBuffer);
