@@ -107,6 +107,10 @@ ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referido_bono_otorgado BOOLEA
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido_en TIMESTAMPTZ;
 
+-- Transacciones de prueba (saldo virtual, sin dinero real): se excluyen de
+-- reportes, rankings y listas públicas, y se identifican en el bono/correo/WhatsApp.
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS es_test BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: pronosticos
 -- ============================================================

@@ -54,10 +54,10 @@ async function asegurarTemplate() {
 /**
  * Genera la imagen del bono (PNG) con el valor, el nombre del cliente y un código QR
  * (token de acceso) incrustados. El QR lo escanea el local para marcar el bono como usado.
- * @param {{ nombre: string, saldoBono: number, tokenAcceso: string }} datos
+ * @param {{ nombre: string, saldoBono: number, tokenAcceso: string, esTest?: boolean }} datos
  * @returns {Promise<Buffer>}
  */
-async function generarImagenBono({ nombre, saldoBono, tokenAcceso }) {
+async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
     await asegurarTemplate();
 
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
@@ -78,6 +78,11 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso }) {
         <text x="${ANCHO / 2}" y="940" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(SEDES_TEXTO_2)}</text>
         <text x="${ANCHO / 2}" y="1150" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_1)}</text>
         <text x="${ANCHO / 2}" y="1200" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_2)}</text>
+        ${esTest ? `
+        <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
+            <rect x="${ANCHO / 2 - 520}" y="${ALTO / 2 - 70}" width="1040" height="140" fill="#dc2626" opacity="0.85"/>
+            <text x="${ANCHO / 2}" y="${ALTO / 2 + 30}" font-family="Arial" font-size="90" font-weight="bold" fill="#ffffff" text-anchor="middle">PRUEBA - NO VÁLIDO</text>
+        </g>` : ''}
     </svg>`;
 
     const composite = [{ input: Buffer.from(overlaySvg), top: 0, left: 0 }];

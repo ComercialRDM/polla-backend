@@ -5,6 +5,7 @@ const adminAuth = require('../middleware/adminAuth');
 const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra } = require('../services/emailService');
+const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
@@ -51,6 +52,7 @@ router.get('/pendientes', async (req, res) => {
                     (t.comprobante_imagen IS NOT NULL) AS tiene_comprobante
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.es_test = FALSE
              ORDER BY t.fecha_creacion DESC`
         );
 
@@ -267,6 +269,40 @@ router.post('/notificar-recompra', async (req, res) => {
         return res.json({ success: true, enviados, total: usuarios.length });
     } catch (err) {
         console.error('Error en /admin/notificar-recompra:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/test/crear-prueba
+// Crea cuentas + transacciones de PRUEBA (saldo virtual, es_test = TRUE) para un
+// grupo de amigos, con 1 cupo de pronóstico cada uno para el partido indicado, y
+// les envía el bono por correo/WhatsApp marcado como "PRUEBA". No genera cobros
+// reales ni aparece en rankings/reportes públicos.
+// Body: { amigos: [{ nombre, celular, correo? }], equipoA, equipoB }
+router.post('/test/crear-prueba', async (req, res) => {
+    const { amigos, equipoA, equipoB } = req.body;
+
+    if (!Array.isArray(amigos) || amigos.length === 0 || !equipoA || !equipoB) {
+        return res.status(400).json({ success: false, error: 'Faltan campos: amigos (array), equipoA, equipoB' });
+    }
+
+    try {
+        const resultado = await crearTransaccionesPrueba({ amigos, equipoA, equipoB });
+        return res.json({ success: true, ...resultado });
+    } catch (err) {
+        console.error('Error en /admin/test/crear-prueba:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// DELETE /api/admin/test/limpiar
+// Elimina todas las transacciones y pronósticos de prueba (es_test = TRUE).
+router.delete('/test/limpiar', async (req, res) => {
+    try {
+        const resultado = await limpiarTransaccionesPrueba();
+        return res.json({ success: true, ...resultado });
+    } catch (err) {
+        console.error('Error en /admin/test/limpiar:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

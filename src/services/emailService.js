@@ -14,14 +14,21 @@ function crearTransporter() {
 
 /**
  * Envía el correo con el bono adjunto, intentos disponibles y link de acceso a la polla.
- * @param {{ destinatario: string, nombre: string, saldoBono: number, intentos: number, tokenAcceso: string, bonoBuffer: Buffer }} datos
+ * @param {{ destinatario: string, nombre: string, saldoBono: number, intentos: number, tokenAcceso: string, bonoBuffer: Buffer, esTest?: boolean }} datos
  */
-async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tokenAcceso, bonoBuffer }) {
+async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tokenAcceso, bonoBuffer, esTest }) {
     const transporter = crearTransporter();
     const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${tokenAcceso}`;
 
+    const bannerTest = esTest
+        ? `<div style="background: #fee2e2; color: #991b1b; font-weight: bold; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+               🧪 ESTE ES UN BONO DE PRUEBA — No representa dinero real y no es válido para redimir en tienda.
+           </div>`
+        : '';
+
     const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        ${bannerTest}
         <h1 style="color: #f59e0b;">¡Gracias por tu compra, ${nombre}!</h1>
         <p>Has recibido tu <strong>Bono Digital</strong> de <strong>$${saldoBono.toLocaleString('es-CO')}</strong> para servicios de La Retoucherie de Manuela.</p>
         <p>Además, ya quedaste inscrita en la <strong>Polla Mundialista</strong> con <strong>${intentos}</strong> intento(s) para predecir el marcador.</p>
@@ -37,7 +44,9 @@ async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tok
     await transporter.sendMail({
         from: process.env.MAIL_FROM,
         to: destinatario,
-        subject: '¡Tu Bono Digital y acceso a la Polla Mundialista! 🇨🇴',
+        subject: esTest
+            ? '🧪 [PRUEBA] Tu Bono Digital y acceso a la Polla Mundialista'
+            : '¡Tu Bono Digital y acceso a la Polla Mundialista! 🇨🇴',
         html,
         attachments: [
             {
