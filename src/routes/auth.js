@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
@@ -13,7 +14,7 @@ function normalizarCelular(celular) {
 }
 
 function generarCodigoOTP() {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return String(crypto.randomInt(100000, 1000000));
 }
 
 // POST /api/auth/registro - crea la cuenta (celular + contraseña + nombre) o reclama una cuenta existente

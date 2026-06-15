@@ -12,12 +12,14 @@ function tokenReferidoValido(ref) {
     return typeof ref === 'string' && UUID_REGEX.test(ref) ? ref : null;
 }
 
+const MIME_TYPES_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        if (!file.mimetype.startsWith('image/')) {
-            return cb(new Error('El comprobante debe ser una imagen'));
+        if (!MIME_TYPES_PERMITIDOS.has(file.mimetype)) {
+            return cb(new Error('El comprobante debe ser una imagen JPG, PNG, WEBP o HEIC'));
         }
         cb(null, true);
     },
