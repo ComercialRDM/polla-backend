@@ -70,6 +70,11 @@ async function actualizarMarcadores() {
     }
 }
 
+// Si football-data.org responde 429, se pausa el monitoreo este tiempo antes de reintentar
+const PAUSA_TRAS_429_MS = 60 * 1000;
+
+let pausadoHasta = 0;
+
 /**
  * Inicia el monitoreo periódico de marcadores en vivo.
  */
@@ -80,7 +85,16 @@ function iniciarMonitorMarcadores() {
     }
 
     setInterval(() => {
-        actualizarMarcadores().catch((err) => console.error('Error en actualizarMarcadores:', err.response?.status, err.message));
+        if (Date.now() < pausadoHasta) return;
+
+        actualizarMarcadores().catch((err) => {
+            if (err.response?.status === 429) {
+                pausadoHasta = Date.now() + PAUSA_TRAS_429_MS;
+                console.warn(`football-data.org respondió 429, pausando monitoreo ${PAUSA_TRAS_429_MS / 1000}s`);
+                return;
+            }
+            console.error('Error en actualizarMarcadores:', err.response?.status, err.message);
+        });
     }, INTERVALO_MS);
 }
 
