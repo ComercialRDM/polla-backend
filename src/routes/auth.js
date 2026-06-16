@@ -216,6 +216,12 @@ router.post('/restablecer-password', async (req, res) => {
     }
 });
 
+// GET /api/auth/google/diagnostico - verifica que GOOGLE_CLIENT_ID esté bien configurado
+router.get('/google/diagnostico', (req, res) => {
+    const id = process.env.GOOGLE_CLIENT_ID || '';
+    res.json({ configurado: !!id, prefijo: id ? id.substring(0, 25) + '...' : '(vacío)' });
+});
+
 // POST /api/auth/google - inicia sesión (o detecta cuenta nueva) con un ID token de Google
 router.post('/google', async (req, res) => {
     const { credential } = req.body;
@@ -260,8 +266,11 @@ router.post('/google', async (req, res) => {
             datos: { nombre, correo: correo || '' },
         });
     } catch (err) {
-        console.error('Error en /auth/google:', err);
-        return res.status(401).json({ success: false, error: 'Token de Google inválido' });
+        console.error('Error en /auth/google:', err.message);
+        const detalle = err.message?.includes('audience') ? 'client_id no coincide'
+            : err.message?.includes('expired') ? 'token expirado'
+            : err.message;
+        return res.status(401).json({ success: false, error: 'Token de Google inválido', detalle });
     }
 });
 
