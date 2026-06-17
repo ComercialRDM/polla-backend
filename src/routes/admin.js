@@ -71,10 +71,10 @@ router.post('/2fa/setup', async (req, res) => {
         const qrDataUrl = await QRCode.toDataURL(secretObj.otpauth_url);
         // Guardar secret base32 pendiente (totp_enabled sigue en FALSE hasta confirmar)
         await pool.query('UPDATE admin_usuarios SET totp_secret = $1 WHERE id = $2', [secretObj.base32, adminId]);
-        return res.json({ success: true, qrDataUrl, secret });
+        return res.json({ success: true, qrDataUrl });
     } catch (err) {
         console.error('Error en /admin/2fa/setup:', err);
-        return res.status(500).json({ success: false, error: `${err?.name}: ${err?.message}` });
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 
