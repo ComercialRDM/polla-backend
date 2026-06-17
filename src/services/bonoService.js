@@ -10,14 +10,15 @@ const ANCHO = 1191;
 const ALTO  = 896;
 
 // --- Coordenadas calibradas para la plantilla "Bono Digital" negra/amarilla ---
-// Valor numérico: va dentro del espacio $( ) de la plantilla
+// Valor numérico: va dentro del espacio "VÁLIDO POR $(  )" de la plantilla
 const COORD = {
-    valor:  { x: 440, y: 453, fontSize: 85, color: '#ffffff' },
-    nombre: { x: 440, y: 815, fontSize: 40, color: '#1a1a1a' },
+    valor:  { x: 400, y: 452, fontSize: 88, color: '#ffffff' },
+    nombre: { x: 430, y: 828, fontSize: 40, color: '#1a1a1a' },
 };
 
-// Código QR: va dentro de la caja blanca esquina superior derecha (debajo del logo)
-const QR = { x: 818, y: 215, size: 250, padding: 10 };
+// Código QR: caja blanca en la zona derecha de la plantilla, DEBAJO del logo Retoucherie
+// y:335 evita superposición con el logo (que termina aprox. en y:295)
+const QR = { x: 762, y: 338, size: 308, padding: 14 };
 
 /**
  * Genera (si no existe) un template placeholder para el bono.
