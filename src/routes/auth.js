@@ -262,6 +262,17 @@ router.get('/manychat/diagnostico', (req, res) => {
     res.json({ configurado: !!key, prefijo: key ? key.substring(0, 10) + '...' : '(vacío)' });
 });
 
+// GET /api/auth/smtp/diagnostico - verifica configuración SMTP
+router.get('/smtp/diagnostico', (req, res) => {
+    res.json({
+        SMTP_HOST: process.env.SMTP_HOST || '(vacío)',
+        SMTP_PORT: process.env.SMTP_PORT || '(vacío)',
+        SMTP_USER: process.env.SMTP_USER ? process.env.SMTP_USER.substring(0, 6) + '...' : '(vacío)',
+        SMTP_PASS: process.env.SMTP_PASS ? '✓ configurado' : '(vacío)',
+        MAIL_FROM: process.env.MAIL_FROM || '(vacío)',
+    });
+});
+
 // POST /api/auth/google - inicia sesión (o detecta cuenta nueva) con un ID token de Google
 router.post('/google', async (req, res) => {
     const { credential } = req.body;
