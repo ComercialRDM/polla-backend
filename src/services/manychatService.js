@@ -20,36 +20,55 @@ function formatearCelularWhatsApp(celular) {
  * Llama a la API de ManyChat. No usa los códigos de estado HTTP para detectar errores
  * porque ManyChat devuelve detalles del error en el body (status: "error").
  */
-async function manychatRequest(path, body) {
-    const { data } = await axios.post(`${MANYCHAT_API_URL}${path}`, body, {
+async function manychatRequest(path, body, method = 'POST') {
+    const config = {
         headers: {
             Authorization: `Bearer ${MANYCHAT_API_KEY}`,
             'Content-Type': 'application/json',
         },
         timeout: 10000,
         validateStatus: () => true,
-    });
+    };
+    const { data } = method === 'GET'
+        ? await axios.get(`${MANYCHAT_API_URL}${path}`, config)
+        : await axios.post(`${MANYCHAT_API_URL}${path}`, body, config);
     return data;
 }
 
 /**
- * Crea el suscriptor de ManyChat para el celular indicado y devuelve su subscriber_id.
- * Solo funciona para contactos que aún no existen en ManyChat: si ya existe, la API
- * no permite recuperar su subscriber_id por teléfono (limitación conocida de ManyChat),
- * por lo que para esos casos el id debe venir ya guardado en usuarios.manychat_subscriber_id.
+ * Obtiene el subscriber_id de ManyChat para el celular dado.
+ * Intenta crear el suscriptor; si ya existe, lo busca por WhatsApp phone.
  */
 async function crearSubscriberId(celular) {
     const whatsappPhone = `+${formatearCelularWhatsApp(celular)}`;
+    const waId = formatearCelularWhatsApp(celular); // sin '+'
+
+    // Intento 1: crear suscriptor
     const respuesta = await manychatRequest('/fb/subscriber/createSubscriber', {
         whatsapp_phone: whatsappPhone,
         consent_phrase: 'Acepto recibir mensajes de La Retoucherie por WhatsApp',
     });
 
-    const subscriberId = respuesta?.data?.id || respuesta?.details?.[0]?.extra?.id;
-    if (!subscriberId) {
-        console.error('No se pudo crear el suscriptor de ManyChat para', celular, JSON.stringify(respuesta));
+    if (respuesta?.data?.id) {
+        return respuesta.data.id;
     }
-    return subscriberId || null;
+
+    // Intento 2: si ya existe ("This WhatsApp ID already exists"), buscarlo
+    if (respuesta?.status === 'error') {
+        const findResp = await manychatRequest(
+            `/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}`,
+            null,
+            'GET'
+        );
+        if (findResp?.data?.id) {
+            return findResp.data.id;
+        }
+        console.error('No se pudo encontrar el suscriptor de ManyChat para', celular,
+            '| create:', JSON.stringify(respuesta),
+            '| find:', JSON.stringify(findResp));
+    }
+
+    return null;
 }
 
 /**
