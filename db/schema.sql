@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS pronosticos (
 CREATE INDEX IF NOT EXISTS idx_pronosticos_marcador ON pronosticos (partido_id, goles_local, goles_visitante);
 CREATE INDEX IF NOT EXISTS idx_pronosticos_fecha_registro ON pronosticos (fecha_registro);
 
+-- Migración: soporte para pronósticos de promoción relámpago (sin bono)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pronosticos' AND column_name = 'transaccion_id' AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE pronosticos ALTER COLUMN transaccion_id DROP NOT NULL;
+    END IF;
+END $$;
+ALTER TABLE pronosticos ADD COLUMN IF NOT EXISTS es_flash BOOLEAN DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: manychat_metricas_diarias
 -- Métricas diarias de campañas de ManyChat (WhatsApp), usadas por el

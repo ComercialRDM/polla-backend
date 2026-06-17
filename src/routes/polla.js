@@ -358,4 +358,121 @@ router.post('/votar', async (req, res) => {
     }
 });
 
+// ── PROMOCIÓN RELÁMPAGO ──────────────────────────────────────────────────────
+// Partidos donde cualquier usuario registrado puede pronosticar sin bono,
+// con ventana de 60 minutos DESPUÉS del pitazo inicial.
+// Válido únicamente para las fechas y equipos indicados.
+const FLASH_PARTIDOS = [
+    { equipoLocal: 'Argentina', equipoVisitante: 'Argelia',  fecha: '2026-06-16', ventanaMin: 60 },
+    { equipoLocal: 'Austria',   equipoVisitante: 'Jordania', fecha: '2026-06-16', ventanaMin: 60 },
+];
+
+function buscarConfigFlash(partido) {
+    const fechaPartido = new Date(partido.fecha_hora_inicio).toISOString().substring(0, 10);
+    return FLASH_PARTIDOS.find(f =>
+        f.equipoLocal === partido.equipo_local &&
+        f.equipoVisitante === partido.equipo_visitante &&
+        f.fecha === fechaPartido
+    ) || null;
+}
+
+// GET /api/polla/flash - lista los partidos de la promoción relámpago activos hoy
+router.get('/flash', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, equipo_local, equipo_visitante, fecha_hora_inicio, estado
+             FROM partidos
+             WHERE estado = 'activo'
+             ORDER BY fecha_hora_inicio ASC`
+        );
+        const flash = rows
+            .filter(p => buscarConfigFlash(p))
+            .map(p => {
+                const conf = buscarConfigFlash(p);
+                const inicio = new Date(p.fecha_hora_inicio);
+                const cierre = new Date(inicio.getTime() + conf.ventanaMin * 60 * 1000);
+                return { ...p, cierre_flash: cierre.toISOString(), ventana_minutos: conf.ventanaMin };
+            });
+        return res.json({ success: true, partidos: flash });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/polla/votar-flash - pronóstico gratuito en promoción relámpago
+router.post('/votar-flash', async (req, res) => {
+    const { usuario_id, partido_id, local, visitante } = req.body;
+
+    if (
+        !usuario_id || !partido_id ||
+        typeof local !== 'number' || typeof visitante !== 'number' ||
+        local < 0 || visitante < 0 ||
+        !Number.isInteger(local) || !Number.isInteger(visitante)
+    ) {
+        return res.status(400).json({ success: false, error: 'Datos inválidos' });
+    }
+
+    try {
+        const { rows: usuarioRows } = await pool.query(
+            'SELECT id, nombre, correo FROM usuarios WHERE id = $1',
+            [usuario_id]
+        );
+        if (usuarioRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+        }
+
+        const { rows: partidoRows } = await pool.query(
+            'SELECT * FROM partidos WHERE id = $1',
+            [partido_id]
+        );
+        if (partidoRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+
+        const partido = partidoRows[0];
+        const conf = buscarConfigFlash(partido);
+
+        if (!conf) {
+            return res.status(403).json({ success: false, error: 'Este partido no hace parte de la promoción relámpago' });
+        }
+
+        if (partido.estado !== 'activo') {
+            return res.status(403).json({ success: false, error: 'La votación para este partido ya está cerrada' });
+        }
+
+        const ahoraUTC = new Date();
+        const inicioPartido = new Date(partido.fecha_hora_inicio);
+        const msDesdeInicio = ahoraUTC.getTime() - inicioPartido.getTime();
+        const ventanaMs = conf.ventanaMin * 60 * 1000;
+
+        if (msDesdeInicio > ventanaMs) {
+            return res.status(403).json({ success: false, error: 'La ventana de la promoción relámpago ya cerró para este partido' });
+        }
+
+        const { rows: existeRows } = await pool.query(
+            'SELECT id FROM pronosticos WHERE usuario_id = $1 AND partido_id = $2',
+            [usuario_id, partido_id]
+        );
+        if (existeRows.length > 0) {
+            return res.status(400).json({ success: false, error: 'Ya registraste tu pronóstico para este partido' });
+        }
+
+        await pool.query(
+            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, es_flash)
+             VALUES (NULL, $1, $2, $3, $4, TRUE)`,
+            [usuario_id, partido_id, local, visitante]
+        );
+
+        invalidate(`ranking:${partido_id}`);
+        invalidate(`resumen:${partido_id}`);
+        invalidate(`pronosticos:${partido_id}`);
+        notificar(partido_id);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en votar-flash:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;
