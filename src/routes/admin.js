@@ -307,4 +307,33 @@ router.delete('/test/limpiar', async (req, res) => {
     }
 });
 
+// GET /api/admin/codigo-reset/:celular - muestra el código OTP activo para recuperar contraseña
+router.get('/codigo-reset/:celular', async (req, res) => {
+    const celular = String(req.params.celular || '').replace(/[^0-9+]/g, '');
+    if (!celular) return res.status(400).json({ success: false, error: 'Celular inválido' });
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT nombre, celular, reset_code, reset_code_expira
+             FROM usuarios
+             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            [celular]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+
+        const u = rows[0];
+        const expirado = !u.reset_code_expira || new Date(u.reset_code_expira) < new Date();
+        return res.json({
+            success: true,
+            nombre: u.nombre,
+            celular: u.celular,
+            codigo: u.reset_code || null,
+            expira: u.reset_code_expira,
+            vigente: !!u.reset_code && !expirado,
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

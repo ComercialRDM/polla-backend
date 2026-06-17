@@ -245,6 +245,12 @@ router.get('/google/diagnostico', (req, res) => {
     res.json({ configurado: !!id, prefijo: id ? id.substring(0, 25) + '...' : '(vacío)' });
 });
 
+// GET /api/auth/manychat/diagnostico - verifica que MANYCHAT_API_KEY esté configurada
+router.get('/manychat/diagnostico', (req, res) => {
+    const key = process.env.MANYCHAT_API_KEY || '';
+    res.json({ configurado: !!key, prefijo: key ? key.substring(0, 10) + '...' : '(vacío)' });
+});
+
 // POST /api/auth/google - inicia sesión (o detecta cuenta nueva) con un ID token de Google
 router.post('/google', async (req, res) => {
     const { credential } = req.body;
