@@ -15,7 +15,8 @@ const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 const simuladorRouter = require('./routes/simulador');
 const localRouter = require('./routes/local');
-const partidosRouter = require('./routes/partidos');
+const partidosRouter  = require('./routes/partidos');
+const passkeysRouter  = require('./routes/passkeys');
 const { authLimiter, adminLimiter, transaccionesLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -62,6 +63,7 @@ app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/local', adminLimiter, localRouter);
 app.use('/api/partidos', partidosRouter);
+app.use('/api/passkey', passkeysRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
@@ -206,6 +208,24 @@ app.listen(PORT, async () => {
         }
     } catch (err) {
         console.error('Error aplicando migración de local_usuarios:', err.message);
+    }
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS passkeys (
+                id            SERIAL PRIMARY KEY,
+                usuario_id    INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                credential_id TEXT NOT NULL UNIQUE,
+                public_key    TEXT NOT NULL,
+                counter       BIGINT NOT NULL DEFAULT 0,
+                device_type   TEXT,
+                backed_up     BOOLEAN DEFAULT FALSE,
+                transports    TEXT[],
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla passkeys:', err.message);
     }
 
     try {
