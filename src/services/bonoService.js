@@ -13,7 +13,8 @@ const ALTO  = 896;
 // Valor numérico: va dentro del espacio "VÁLIDO POR $(  )" de la plantilla
 const COORD = {
     valor:  { x: 400, y: 452, fontSize: 88, color: '#ffffff' },
-    nombre: { x: 430, y: 828, fontSize: 40, color: '#1a1a1a' },
+    // Nombre: alineado a la izquierda (anchor=start) justo después del "PARA:" impreso
+    nombre: { x: 395, y: 830, fontSize: 38, color: '#1a1a1a' },
 };
 
 // Código QR: caja blanca en la zona derecha de la plantilla, DEBAJO del logo Retoucherie
@@ -49,13 +50,13 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
     const valorFormateado = saldoBono.toLocaleString('es-CO');
 
-    // Reduce el tamaño de letra del nombre si es muy largo para que no se salga del recuadro
-    const nombreFontSize = nombre.length > 22 ? 32 : COORD.nombre.fontSize;
+    // Reduce el tamaño de letra del nombre según longitud (alineado a la izquierda desde x:335)
+    const nombreFontSize = nombre.length > 30 ? 28 : nombre.length > 22 ? 34 : COORD.nombre.fontSize;
 
     const overlaySvg = `
     <svg width="${ANCHO}" height="${ALTO}" xmlns="http://www.w3.org/2000/svg">
         <text x="${COORD.valor.x}" y="${COORD.valor.y}" font-family="Georgia, 'Times New Roman', serif" font-size="${COORD.valor.fontSize}" font-weight="bold" fill="${COORD.valor.color}" text-anchor="middle">${valorFormateado}</text>
-        <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="middle">${escapeXml(nombre)}</text>
+        <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="start">${escapeXml(nombre)}</text>
         ${esTest ? `
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
             <rect x="${ANCHO / 2 - 520}" y="${ALTO / 2 - 70}" width="1040" height="140" fill="#dc2626" opacity="0.85"/>
