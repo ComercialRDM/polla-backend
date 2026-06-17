@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const pool = require('../db');
 const localAuth = require('../middleware/localAuth');
 const { generarToken } = require('../utils/adminTokens');
@@ -43,19 +44,18 @@ router.post('/reset-password', async (req, res) => {
     if (!correo) return res.status(400).json({ success: false, error: 'Falta correo' });
 
     try {
+        // Generar hash siempre (tiempo constante, evita timing oracle)
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const tempPass = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join('');
+        const hash = await bcrypt.hash(tempPass, 10);
+
         const { rows } = await pool.query(
             'SELECT id, nombre_local FROM local_usuarios WHERE correo = $1 AND activo = TRUE',
             [correo.trim().toLowerCase()]
         );
 
         if (rows.length > 0) {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-            let tempPass = '';
-            for (let i = 0; i < 8; i++) tempPass += chars[Math.floor(Math.random() * chars.length)];
-
-            const hash = await bcrypt.hash(tempPass, 10);
             await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
-
             const { enviarCorreoResetLocalPassword } = require('../services/emailService');
             enviarCorreoResetLocalPassword({
                 destinatario: correo.trim().toLowerCase(),
@@ -64,7 +64,6 @@ router.post('/reset-password', async (req, res) => {
             }).catch(err => console.error('Error enviando correo reset local:', err.message));
         }
 
-        // Siempre responder success para no revelar si el correo existe
         return res.json({ success: true });
     } catch (err) {
         console.error('Error en /local/reset-password:', err);

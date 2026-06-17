@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { generarToken } = require('../utils/adminTokens');
@@ -498,35 +499,6 @@ function calcPuntos(partido, predLocal, predVisitante) {
     return 0;
 }
 
-// GET /api/admin/codigo-reset/:celular - muestra el código OTP activo para recuperar contraseña
-router.get('/codigo-reset/:celular', async (req, res) => {
-    const celular = String(req.params.celular || '').replace(/[^0-9+]/g, '');
-    if (!celular) return res.status(400).json({ success: false, error: 'Celular inválido' });
-
-    try {
-        const { rows } = await pool.query(
-            `SELECT nombre, celular, reset_code, reset_code_expira
-             FROM usuarios
-             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-            [celular]
-        );
-        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
-
-        const u = rows[0];
-        const expirado = !u.reset_code_expira || new Date(u.reset_code_expira) < new Date();
-        return res.json({
-            success: true,
-            nombre: u.nombre,
-            celular: u.celular,
-            codigo: u.reset_code || null,
-            expira: u.reset_code_expira,
-            vigente: !!u.reset_code && !expirado,
-        });
-    } catch (err) {
-        return res.status(500).json({ success: false, error: 'Error interno' });
-    }
-});
-
 // POST /api/admin/test-whatsapp - diagnóstico paso a paso: createSubscriber → sendContent
 router.post('/test-whatsapp', async (req, res) => {
     const { celular } = req.body;
@@ -683,8 +655,7 @@ router.patch('/local-usuarios/:id/reset-password', async (req, res) => {
         if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
 
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-        let tempPass = '';
-        for (let i = 0; i < 8; i++) tempPass += chars[Math.floor(Math.random() * chars.length)];
+        const tempPass = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join('');
 
         const hash = await bcrypt.hash(tempPass, 10);
         await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, id]);

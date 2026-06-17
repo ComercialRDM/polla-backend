@@ -42,7 +42,18 @@ if (origenesPermitidos.length === 0) {
 // interferencias. Se permite que /api/polla/bono/:token (imagen del bono) se cargue
 // desde el frontend (otro origen) y desde WhatsApp/ManyChat.
 app.use(helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+            connectSrc: ["'self'", 'https://api.manychat.com', 'https://sandbox.wompi.co', 'https://production.wompi.co'],
+            fontSrc: ["'self'", 'https:', 'data:'],
+            frameSrc: ["'none'"],
+            objectSrc: ["'none'"],
+        },
+    },
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
 }));
