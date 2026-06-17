@@ -1,6 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { authenticator } = require('otplib');
+const QRCode = require('qrcode');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { generarToken } = require('../utils/adminTokens');
@@ -13,9 +15,9 @@ const { enviarMensajeManyChat, formatearCelularWhatsApp } = require('../services
 
 const router = express.Router();
 
-// POST /api/admin/login - autenticación con cuenta individual (usuario + contraseña)
+// POST /api/admin/login - autenticación con usuario + contraseña [+ TOTP si 2FA activo]
 router.post('/login', async (req, res) => {
-    const { usuario, password } = req.body;
+    const { usuario, password, totp_code } = req.body;
 
     if (!usuario || !password) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
@@ -23,7 +25,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            'SELECT id, usuario, password_hash FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
+            'SELECT id, usuario, password_hash, totp_secret, totp_enabled FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
             [usuario]
         );
 
@@ -36,6 +38,17 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos' });
         }
 
+        // Si 2FA está activo, exigir el código TOTP
+        if (rows[0].totp_enabled) {
+            if (!totp_code) {
+                return res.status(200).json({ success: false, requires_2fa: true });
+            }
+            const valido2fa = authenticator.check(totp_code, rows[0].totp_secret);
+            if (!valido2fa) {
+                return res.status(401).json({ success: false, error: 'Código de verificación incorrecto' });
+            }
+        }
+
         const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario });
         return res.json({ success: true, token, usuario: rows[0].usuario });
     } catch (err) {
@@ -45,6 +58,75 @@ router.post('/login', async (req, res) => {
 });
 
 router.use(adminAuth);
+
+// POST /api/admin/2fa/setup - genera secret TOTP + QR (no activa aún)
+router.post('/2fa/setup', async (req, res) => {
+    const adminId = req.admin.id;
+    try {
+        const { rows } = await pool.query('SELECT usuario, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
+        if (rows[0].totp_enabled) {
+            return res.status(409).json({ success: false, error: '2FA ya está activo. Desactívalo primero.' });
+        }
+        const secret = authenticator.generateSecret();
+        const otpauthUrl = authenticator.keyuri(rows[0].usuario, 'Admin Polla La Retoucherie', secret);
+        const qrDataUrl = await QRCode.toDataURL(otpauthUrl);
+        // Guardar secret pendiente (totp_enabled sigue en FALSE hasta confirmar)
+        await pool.query('UPDATE admin_usuarios SET totp_secret = $1 WHERE id = $2', [secret, adminId]);
+        return res.json({ success: true, qrDataUrl, secret });
+    } catch (err) {
+        console.error('Error en /admin/2fa/setup:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/2fa/confirmar - verifica primer código y activa 2FA
+router.post('/2fa/confirmar', async (req, res) => {
+    const { code } = req.body;
+    const adminId = req.admin.id;
+    if (!code) return res.status(400).json({ success: false, error: 'Falta code' });
+    try {
+        const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
+        if (!rows[0].totp_secret) return res.status(400).json({ success: false, error: 'Primero ejecuta /2fa/setup' });
+        if (rows[0].totp_enabled) return res.status(409).json({ success: false, error: '2FA ya está activo' });
+        if (!authenticator.check(code, rows[0].totp_secret)) {
+            return res.status(401).json({ success: false, error: 'Código incorrecto. Verifica que la hora del dispositivo sea correcta.' });
+        }
+        await pool.query('UPDATE admin_usuarios SET totp_enabled = TRUE WHERE id = $1', [adminId]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /admin/2fa/confirmar:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/2fa/desactivar - desactiva 2FA (requiere código válido como confirmación)
+router.post('/2fa/desactivar', async (req, res) => {
+    const { code } = req.body;
+    const adminId = req.admin.id;
+    if (!code) return res.status(400).json({ success: false, error: 'Falta code' });
+    try {
+        const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
+        if (!rows[0].totp_enabled) return res.status(400).json({ success: false, error: '2FA no está activo' });
+        if (!authenticator.check(code, rows[0].totp_secret)) {
+            return res.status(401).json({ success: false, error: 'Código incorrecto' });
+        }
+        await pool.query('UPDATE admin_usuarios SET totp_secret = NULL, totp_enabled = FALSE WHERE id = $1', [adminId]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /admin/2fa/desactivar:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/2fa/estado - indica si el admin actual tiene 2FA activo
+router.get('/2fa/estado', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT totp_enabled FROM admin_usuarios WHERE id = $1', [req.admin.id]);
+        return res.json({ success: true, totp_enabled: rows[0]?.totp_enabled ?? false });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
 
 // GET /api/admin/pendientes
 router.get('/pendientes', async (req, res) => {

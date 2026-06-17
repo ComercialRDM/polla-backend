@@ -144,10 +144,15 @@ app.listen(PORT, async () => {
                 id SERIAL PRIMARY KEY,
                 usuario TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                totp_secret TEXT,
+                totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 activo BOOLEAN NOT NULL DEFAULT TRUE,
                 fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         `);
+
+        await pool.query(`ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS totp_secret TEXT`);
+        await pool.query(`ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
 
         // Si la tabla está vacía, se crea la primera cuenta a partir de
         // ADMIN_SEED_USUARIO / ADMIN_SEED_PASSWORD para no quedar sin acceso.
