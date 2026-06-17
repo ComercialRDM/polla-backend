@@ -811,6 +811,26 @@ router.patch('/local-usuarios/:id/toggle', async (req, res) => {
     }
 });
 
+// POST /api/admin/limpiar-usuarios-prueba - TEMPORAL: borra usuarios de prueba excepto los 3 reales
+router.post('/limpiar-usuarios-prueba', async (req, res) => {
+    const CELULARES_REALES = ['3115223853', '3108315035', '3012786234'];
+    try {
+        const { rows: aEliminar } = await pool.query(
+            `SELECT id, nombre FROM usuarios WHERE celular NOT IN (${CELULARES_REALES.map((_, i) => `$${i + 1}`).join(',')})`,
+            CELULARES_REALES
+        );
+        if (aEliminar.length === 0) return res.json({ success: true, eliminados: 0, mensaje: 'No hay usuarios de prueba.' });
+        await pool.query(
+            `DELETE FROM usuarios WHERE celular NOT IN (${CELULARES_REALES.map((_, i) => `$${i + 1}`).join(',')})`,
+            CELULARES_REALES
+        );
+        return res.json({ success: true, eliminados: aEliminar.length, nombres: aEliminar.map(u => u.nombre) });
+    } catch (err) {
+        console.error('Error en limpiar-usuarios-prueba:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // GET /api/admin/usuarios - lista todos los usuarios registrados con resumen de actividad
 router.get('/usuarios', async (req, res) => {
     try {
