@@ -208,6 +208,23 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de local_usuarios:', err.message);
     }
 
+    try {
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'pronosticos' AND column_name = 'transaccion_id' AND is_nullable = 'NO'
+                ) THEN
+                    ALTER TABLE pronosticos ALTER COLUMN transaccion_id DROP NOT NULL;
+                END IF;
+            END $$;
+        `);
+        await pool.query(`ALTER TABLE pronosticos ADD COLUMN IF NOT EXISTS es_flash BOOLEAN DEFAULT FALSE`);
+    } catch (err) {
+        console.error('Error aplicando migración de pronosticos flash:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });
