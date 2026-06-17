@@ -447,6 +447,45 @@ router.get('/resumen-usuario', async (req, res) => {
             'SELECT COUNT(DISTINCT usuario_id)::int AS total FROM pronosticos'
         );
 
+        // Puntos mínimos del usuario inmediatamente arriba en el ranking
+        const { rows: sigRows } = await pool.query(
+            `SELECT MIN(pts) AS puntos_siguiente
+             FROM (
+                 SELECT pr2.usuario_id,
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND pr2.goles_local = p2.goles_local
+                         AND pr2.goles_visitante = p2.goles_visitante
+                     ) * 3 +
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND (
+                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                         )
+                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                     ) AS pts
+                 FROM pronosticos pr2
+                 JOIN partidos p2 ON p2.id = pr2.partido_id
+                 WHERE pr2.usuario_id != $1
+                 GROUP BY pr2.usuario_id
+             ) ranking
+             WHERE pts > $2`,
+            [usuario_id, puntos]
+        );
+        const puntos_siguiente = sigRows[0]?.puntos_siguiente != null ? parseInt(sigRows[0].puntos_siguiente) : null;
+        const puntos_para_superar = puntos_siguiente != null ? puntos_siguiente - puntos : null;
+
+        // Token del bono más reciente (para enlazar directo a la página de pronosticar)
+        const { rows: tokenRows } = await pool.query(
+            `SELECT token_acceso FROM transacciones
+             WHERE usuario_id = $1 AND estado_pago = 'APROBADO'
+             ORDER BY id DESC LIMIT 1`,
+            [usuario_id]
+        );
+        const token_polla = tokenRows[0]?.token_acceso || null;
+
         return res.json({
             success: true,
             intentos_realizados,
@@ -457,6 +496,8 @@ router.get('/resumen-usuario', async (req, res) => {
             parciales,
             posicion: posRows[0].posicion,
             total_participantes: totalPart[0].total,
+            puntos_para_superar,
+            token_polla,
         });
     } catch (err) {
         console.error('Error en /polla/resumen-usuario:', err);
