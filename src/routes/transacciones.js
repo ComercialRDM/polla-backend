@@ -90,7 +90,7 @@ router.post('/crear-link', async (req, res) => {
             description: `Bono Digital La Retoucherie de Manuela - $${plan.saldoBono.toLocaleString('es-CO')}`,
             amountInCents,
             reference,
-            redirectUrl: `${process.env.FRONTEND_URL}/polla?token=${transaccion.token_acceso}`,
+            redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
         });
 
         // Guardar payment_link_id y reference
