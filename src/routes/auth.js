@@ -177,6 +177,10 @@ router.post('/solicitar-reset', async (req, res) => {
                     codigo,
                     vigenciaMin: RESET_CODE_VIGENCIA_MIN,
                 });
+                // Devolver correo enmascarado para que el usuario sepa dónde buscar
+                const partes = usuario.correo.split('@');
+                const mascara = partes[0].substring(0, 3) + '***@' + partes[1];
+                return res.json({ success: true, destino: mascara });
             } else {
                 const { subscriberId } = await enviarMensajeManyChat({
                     celular: usuario.celular,
