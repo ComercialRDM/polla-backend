@@ -4,9 +4,9 @@ const crypto = require('crypto');
 // Si no está definido ADMIN_JWT_SECRET, se usa un valor aleatorio generado en
 // memoria (las sesiones no sobreviven a un reinicio del servidor).
 if (!process.env.ADMIN_JWT_SECRET) {
-    throw new Error('ADMIN_JWT_SECRET no está configurado. Defínelo en las variables de entorno antes de arrancar el servidor.');
+    console.warn('ADVERTENCIA: ADMIN_JWT_SECRET no está configurado. Las sesiones admin se invalidarán en cada reinicio. Define esta variable en Render.');
 }
-const SECRET = process.env.ADMIN_JWT_SECRET;
+const SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 const TOKEN_VIGENCIA_SEG = 12 * 60 * 60; // 12 horas
 

@@ -74,7 +74,7 @@ router.post('/2fa/setup', async (req, res) => {
         return res.json({ success: true, qrDataUrl, secret });
     } catch (err) {
         console.error('Error en /admin/2fa/setup:', err);
-        return res.status(500).json({ success: false, error: 'Error interno' });
+        return res.status(500).json({ success: false, error: `${err?.name}: ${err?.message}` });
     }
 });
 
