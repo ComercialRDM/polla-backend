@@ -557,7 +557,13 @@ router.post('/test-whatsapp', async (req, res) => {
     const subscriberId = paso1?.data?.id || paso1?.details?.[0]?.extra?.id;
 
     if (!subscriberId) {
-        return res.json({ success: false, paso: 'createSubscriber', celularFormateado, respuestaManyChat: paso1 });
+        return res.json({
+            success: false,
+            paso: 'createSubscriber — subscriber ID no encontrado en respuesta',
+            celularFormateado,
+            error: `ManyChat no devolvió subscriber_id. Revisa 'detalles' para ver la respuesta cruda.`,
+            detalles: paso1,
+        });
     }
 
     // Paso 2: sendContent
@@ -569,7 +575,7 @@ router.post('/test-whatsapp', async (req, res) => {
         }, { headers, validateStatus: () => true });
         paso2 = data;
     } catch (err) {
-        return res.json({ success: false, paso: 'sendContent', subscriberId, error: err.message, celularFormateado, respuestaCreate: paso1 });
+        return res.json({ success: false, paso: 'sendContent', subscriberId, celularFormateado, error: err.message, detalles: paso1 });
     }
 
     return res.json({
@@ -577,8 +583,8 @@ router.post('/test-whatsapp', async (req, res) => {
         paso: 'sendContent',
         subscriberId,
         celularFormateado,
-        respuestaCreate: paso1,
-        respuestaSend: paso2,
+        detalles: paso2,
+        ...(paso2?.status !== 'success' && { error: `sendContent falló: ${JSON.stringify(paso2)}` }),
     });
 });
 
