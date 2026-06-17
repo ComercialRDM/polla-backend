@@ -133,9 +133,11 @@ router.post('/limpiar-pruebas', async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // Identificar transacción real a conservar
+        // Identificar transacción real a conservar (nombre está en usuarios, no en transacciones)
         const { rows: reales } = await client.query(
-            `SELECT id FROM transacciones WHERE nombre ILIKE '%Ricardo Angulo%' AND es_test = FALSE`
+            `SELECT t.id FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE u.nombre ILIKE '%Ricardo Angulo%' AND t.es_test = FALSE`
         );
         if (reales.length === 0) {
             await client.query('ROLLBACK');
