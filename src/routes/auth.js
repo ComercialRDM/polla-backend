@@ -56,23 +56,39 @@ router.post('/registro', async (req, res) => {
     const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
 
     try {
-        const { rows: existentes } = await pool.query(
-            `SELECT id, password_hash FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-            [celularNormalizado]
-        );
+        const [{ rows: porCelular }, { rows: porCorreo }] = await Promise.all([
+            pool.query(
+                `SELECT id, password_hash FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+                [celularNormalizado]
+            ),
+            pool.query(
+                `SELECT id FROM usuarios WHERE correo = $1 AND password_hash IS NOT NULL`,
+                [correoLimpio]
+            ),
+        ]);
+
+        const celularTieneCuenta = porCelular.length > 0 && !!porCelular[0].password_hash;
+        const correoTieneCuenta = porCorreo.length > 0;
+
+        if (celularTieneCuenta && correoTieneCuenta) {
+            return res.status(409).json({ success: false, error: 'Ya hay una cuenta creada con este correo electrónico y número de celular. Inicia sesión.' });
+        }
+        if (celularTieneCuenta) {
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este número de celular. Inicia sesión.' });
+        }
+        if (correoTieneCuenta) {
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este correo electrónico. Inicia sesión.' });
+        }
 
         const passwordHash = await bcrypt.hash(password, 10);
         let usuario;
 
-        if (existentes.length > 0) {
-            if (existentes[0].password_hash) {
-                return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este celular. Inicia sesión.' });
-            }
-
+        if (porCelular.length > 0) {
+            // Usuario de prueba (sin contraseña) — reclamar la cuenta
             const { rows } = await pool.query(
                 `UPDATE usuarios SET nombre = $1, password_hash = $2, correo = $3, equipos_favoritos = $4 WHERE id = $5
                  RETURNING id, nombre, celular, correo, equipos_favoritos, calendario_token`,
-                [nombreLimpio, passwordHash, correoLimpio, equipos, existentes[0].id]
+                [nombreLimpio, passwordHash, correoLimpio, equipos, porCelular[0].id]
             );
             usuario = rows[0];
         } else {
@@ -88,7 +104,7 @@ router.post('/registro', async (req, res) => {
     } catch (err) {
         console.error('Error en /auth/registro:', err);
         if (err.code === '23505') {
-            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este celular. Inicia sesión.' });
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con estos datos. Inicia sesión.' });
         }
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
