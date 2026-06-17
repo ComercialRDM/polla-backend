@@ -4,7 +4,7 @@ const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
-const { enviarCorreoRecompra } = require('../services/emailService');
+const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
@@ -173,7 +173,7 @@ router.patch('/partidos/:id', async (req, res) => {
             (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia')
         ) {
             const { rows: exactos } = await pool.query(
-                `SELECT pr.usuario_id, u.nombre, u.celular
+                `SELECT pr.usuario_id, u.nombre, u.correo, u.celular
                  FROM pronosticos pr
                  JOIN usuarios u ON u.id = pr.usuario_id
                  WHERE pr.partido_id = $1
@@ -183,12 +183,21 @@ router.patch('/partidos/:id', async (req, res) => {
             );
             if (exactos.length > 0) {
                 const montoPorGanador = Math.floor(500000 / exactos.length);
+                const nombrePartido = `${partido.equipo_local} ${partido.goles_local} - ${partido.goles_visitante} ${partido.equipo_visitante}`;
                 for (const g of exactos) {
                     await pool.query(
                         `INSERT INTO bonos_colombia (partido_id, usuario_id, monto_cop)
                          VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING`,
                         [id, g.usuario_id, montoPorGanador]
                     );
+                    if (g.correo) {
+                        enviarCorreoBonoColWinner({
+                            destinatario: g.correo,
+                            nombre: g.nombre,
+                            partido: nombrePartido,
+                            monto: montoPorGanador,
+                        }).catch((err) => console.error('Error enviando email Bono Colombia:', err.message));
+                    }
                 }
                 bonoColombia = {
                     ganadores: exactos.map((g) => ({ nombre: g.nombre, celular: g.celular })),
@@ -513,6 +522,42 @@ router.get('/codigo-reset/:celular', async (req, res) => {
             vigente: !!u.reset_code && !expirado,
         });
     } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
+router.get('/bonos-colombia', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT bc.id, bc.monto_cop, bc.reclamado, bc.created_at,
+                   u.nombre, u.correo, u.celular,
+                   p.equipo_local, p.equipo_visitante,
+                   p.goles_local, p.goles_visitante, p.fecha_hora_inicio
+            FROM bonos_colombia bc
+            JOIN usuarios u ON u.id = bc.usuario_id
+            JOIN partidos p ON p.id = bc.partido_id
+            ORDER BY bc.created_at DESC
+        `);
+        return res.json({ success: true, bonos: rows });
+    } catch (err) {
+        console.error('Error en GET /admin/bonos-colombia:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/bonos-colombia/:id - marcar como reclamado
+router.patch('/bonos-colombia/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { rows } = await pool.query(
+            'UPDATE bonos_colombia SET reclamado = TRUE WHERE id = $1 RETURNING id',
+            [id]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en PATCH /admin/bonos-colombia:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

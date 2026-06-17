@@ -176,4 +176,32 @@ async function enviarCorreoResetPassword({ destinatario, nombre, codigo, vigenci
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword };
+/**
+ * Notifica a un ganador del Bono Colombia $500K que acertó el marcador exacto.
+ */
+async function enviarCorreoBonoColWinner({ destinatario, nombre, partido, monto }) {
+    const transporter = crearTransporter();
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #FCD116;">🇨🇴 ¡Felicitaciones, ${nombre}!</h1>
+        <p>Acertaste el <strong>marcador exacto</strong> del partido <strong>${partido}</strong>.</p>
+        <p>¡Has ganado el <strong>Bono Colombia</strong> por valor de
+           <strong style="color: #f59e0b;">$${monto.toLocaleString('es-CO')} COP</strong>
+           en Gift Card!</p>
+        <p>Nuestro equipo se comunicará contigo a la brevedad para coordinar la entrega.
+           Recuerda tener a mano tu documento de identidad.</p>
+        <p style="font-size: 12px; color: #71717a; margin-top: 24px;">
+            La Retoucherie de Manuela · GanaConRetoucherie
+        </p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: '🇨🇴 ¡Ganaste el Bono Colombia! — La Retoucherie',
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner };

@@ -823,4 +823,73 @@ router.post('/votar-flash', async (req, res) => {
     }
 });
 
+// GET /api/polla/resultados-finales - top 3 del ranking con premios (público)
+router.get('/resultados-finales', async (req, res) => {
+    try {
+        const { rows: top3 } = await pool.query(`
+            SELECT u.id, u.nombre,
+                   COALESCE(SUM(
+                       CASE
+                           WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                AND pa.goles_local IS NOT NULL
+                           THEN CASE pa.fase
+                               WHEN 'grupos'        THEN 100
+                               WHEN 'dieciseisavos' THEN 120
+                               WHEN 'octavos'       THEN 200
+                               WHEN 'cuartos'       THEN 250
+                               WHEN 'semifinal'     THEN 800
+                               WHEN 'final'         THEN 2000
+                               ELSE 100 END
+                           WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                                AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                                AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                           THEN CASE pa.fase
+                               WHEN 'grupos'        THEN 50
+                               WHEN 'dieciseisavos' THEN 60
+                               WHEN 'octavos'       THEN 100
+                               WHEN 'cuartos'       THEN 125
+                               WHEN 'semifinal'     THEN 400
+                               WHEN 'final'         THEN 1000
+                               ELSE 50 END
+                           ELSE 0
+                       END
+                   ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
+                   COUNT(
+                       CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                 AND pa.goles_local IS NOT NULL THEN 1 END
+                   ) AS exactos
+            FROM usuarios u
+            LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+            LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+            GROUP BY u.id, u.nombre, u.puntos_bonus
+            ORDER BY puntos_total DESC, exactos DESC
+            LIMIT 3
+        `);
+
+        const { rows: pozoRows } = await pool.query(
+            'SELECT primero, segundo, tercero FROM pozo_premios WHERE id = 1'
+        );
+        const { rows: countRows } = await pool.query(
+            'SELECT COUNT(*)::int AS total FROM usuarios'
+        );
+
+        const premios = pozoRows[0] || { primero: 2000000, segundo: 1000000, tercero: 500000 };
+
+        return res.json({
+            success: true,
+            top3: top3.map((u, i) => ({
+                posicion: i + 1,
+                nombre: u.nombre,
+                puntos: Number(u.puntos_total),
+                exactos: Number(u.exactos),
+            })),
+            premios,
+            total_participantes: countRows[0]?.total || 0,
+        });
+    } catch (err) {
+        console.error('Error en /polla/resultados-finales:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;
