@@ -157,11 +157,50 @@ router.patch('/partidos/:id', async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
         }
+        const partido = rows[0];
         invalidate('partidos:lista');
         invalidate(`ranking:${id}`);
         invalidate(`resumen:${id}`);
         notificar(id);
-        return res.json({ success: true, partido: rows[0] });
+
+        // Bono Colombia $500K: se activa al cerrar un partido de Colombia en fase grupos con marcador
+        let bonoColombia = null;
+        if (
+            partido.estado === 'cerrado' &&
+            partido.fase === 'grupos' &&
+            partido.goles_local !== null &&
+            partido.goles_visitante !== null &&
+            (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia')
+        ) {
+            const { rows: exactos } = await pool.query(
+                `SELECT pr.usuario_id, u.nombre, u.celular
+                 FROM pronosticos pr
+                 JOIN usuarios u ON u.id = pr.usuario_id
+                 WHERE pr.partido_id = $1
+                   AND pr.goles_local = $2
+                   AND pr.goles_visitante = $3`,
+                [id, partido.goles_local, partido.goles_visitante]
+            );
+            if (exactos.length > 0) {
+                const montoPorGanador = Math.floor(500000 / exactos.length);
+                for (const g of exactos) {
+                    await pool.query(
+                        `INSERT INTO bonos_colombia (partido_id, usuario_id, monto_cop)
+                         VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING`,
+                        [id, g.usuario_id, montoPorGanador]
+                    );
+                }
+                bonoColombia = {
+                    ganadores: exactos.map((g) => ({ nombre: g.nombre, celular: g.celular })),
+                    montoPorGanador,
+                    totalDistribuido: montoPorGanador * exactos.length,
+                };
+            } else {
+                bonoColombia = { ganadores: [], desierto: true };
+            }
+        }
+
+        return res.json({ success: true, partido, bonoColombia });
     } catch (err) {
         console.error('Error en /admin/partidos PATCH:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });

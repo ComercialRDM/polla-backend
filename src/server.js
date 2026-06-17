@@ -316,6 +316,22 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de pozo_premios:', err.message);
     }
 
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS bonos_colombia (
+                id          SERIAL PRIMARY KEY,
+                partido_id  INTEGER NOT NULL REFERENCES partidos(id),
+                usuario_id  INTEGER NOT NULL REFERENCES usuarios(id),
+                monto_cop   INTEGER NOT NULL,
+                reclamado   BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (partido_id, usuario_id)
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla bonos_colombia:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });
