@@ -148,4 +148,32 @@ async function enviarCorreoBackup({ destinatario, filename, buffer, resumen }) {
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup };
+/**
+ * Envía el código OTP de recuperación de contraseña al correo del usuario.
+ */
+async function enviarCorreoResetPassword({ destinatario, nombre, codigo, vigenciaMin }) {
+    const transporter = crearTransporter();
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #FCD116;">🔐 Recuperar contraseña</h1>
+        <p>Hola <strong>${nombre}</strong>,</p>
+        <p>Tu código para reestablecer la contraseña de la <strong>Polla Mundialista de La Retoucherie</strong> es:</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <span style="font-size: 40px; font-weight: bold; letter-spacing: 12px; color: #18181b; background: #FCD116; padding: 16px 32px; border-radius: 12px;">
+                ${codigo}
+            </span>
+        </div>
+        <p>Este código vence en <strong>${vigenciaMin} minutos</strong>. Si no solicitaste este cambio, ignora este correo.</p>
+        <p style="font-size: 12px; color: #71717a; margin-top: 24px;">La Retoucherie de Manuela · GanaConRetoucherie</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `${codigo} — Tu código de recuperación · La Retoucherie`,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword };

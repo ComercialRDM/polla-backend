@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
+const { enviarCorreoResetPassword } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -143,9 +144,9 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// POST /api/auth/solicitar-reset - genera un código OTP y lo envía por WhatsApp (ManyChat)
+// POST /api/auth/solicitar-reset - genera un código OTP y lo envía por WhatsApp o correo
 router.post('/solicitar-reset', async (req, res) => {
-    const { celular } = req.body;
+    const { celular, metodo = 'whatsapp' } = req.body;
     const celularNormalizado = normalizarCelular(celular);
 
     if (!celularNormalizado) {
@@ -154,27 +155,37 @@ router.post('/solicitar-reset', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT id, celular, manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1 AND password_hash IS NOT NULL`,
+            `SELECT id, nombre, celular, correo, manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1 AND password_hash IS NOT NULL`,
             [celularNormalizado]
         );
 
-        // Respuesta genérica siempre, exista o no la cuenta, para evitar enumeración de usuarios.
-        // El mensaje de WhatsApp solo se envía si la cuenta existe.
         if (rows.length > 0) {
+            const usuario = rows[0];
             const codigo = generarCodigoOTP();
             await pool.query(
                 `UPDATE usuarios SET reset_code = $1, reset_code_expira = now() + interval '${RESET_CODE_VIGENCIA_MIN} minutes', reset_intentos = 0 WHERE id = $2`,
-                [codigo, rows[0].id]
+                [codigo, usuario.id]
             );
 
-            const { subscriberId } = await enviarMensajeManyChat({
-                celular: rows[0].celular,
-                mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
-                subscriberId: rows[0].manychat_subscriber_id,
-            });
-
-            if (subscriberId && !rows[0].manychat_subscriber_id) {
-                await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), rows[0].id]);
+            if (metodo === 'correo') {
+                if (!usuario.correo) {
+                    return res.status(400).json({ success: false, error: 'Esta cuenta no tiene correo registrado. Usa la opción de WhatsApp.' });
+                }
+                await enviarCorreoResetPassword({
+                    destinatario: usuario.correo,
+                    nombre: usuario.nombre,
+                    codigo,
+                    vigenciaMin: RESET_CODE_VIGENCIA_MIN,
+                });
+            } else {
+                const { subscriberId } = await enviarMensajeManyChat({
+                    celular: usuario.celular,
+                    mensaje: `🔐 Tu código para reestablecer tu contraseña de la Polla Mundialista es: ${codigo}\n\nEste código vence en ${RESET_CODE_VIGENCIA_MIN} minutos.`,
+                    subscriberId: usuario.manychat_subscriber_id,
+                });
+                if (subscriberId && !usuario.manychat_subscriber_id) {
+                    await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), usuario.id]);
+                }
             }
         }
 
