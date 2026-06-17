@@ -65,6 +65,21 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
 
         await client.query('COMMIT');
 
+        // Recalcular pozo de premios con la nueva facturación (fuera de la TX: no bloquea si falla)
+        try {
+            await pool.query(`
+                UPDATE pozo_premios SET
+                    total_fact  = total_fact + $1,
+                    primero     = LEAST(2000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.50, 5000000)::bigint,
+                    segundo     = LEAST(1000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.30, 2000000)::bigint,
+                    tercero     = LEAST( 500000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.20, 1000000)::bigint,
+                    actualizado = now()
+                WHERE id = 1
+            `, [transaccion.valor_pagado]);
+        } catch (errPozo) {
+            console.error('Error actualizando pozo_premios:', errPozo.message);
+        }
+
         // A partir de aquí la transacción ya quedó APROBADA en la base de datos.
         // Cualquier error al generar el bono o notificar se loguea, pero no revierte la aprobación.
         try {

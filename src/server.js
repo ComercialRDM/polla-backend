@@ -300,6 +300,22 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de fase/cupos_costo:', err.message);
     }
 
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS pozo_premios (
+                id          INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                primero     BIGINT NOT NULL DEFAULT 2000000,
+                segundo     BIGINT NOT NULL DEFAULT 1000000,
+                tercero     BIGINT NOT NULL DEFAULT 500000,
+                total_fact  BIGINT NOT NULL DEFAULT 0,
+                actualizado TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query(`INSERT INTO pozo_premios DEFAULT VALUES ON CONFLICT DO NOTHING`);
+    } catch (err) {
+        console.error('Error aplicando migración de pozo_premios:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

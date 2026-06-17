@@ -690,6 +690,22 @@ router.get('/mis-pronosticos', async (req, res) => {
     }
 });
 
+// GET /api/polla/pozo - pozo de premios actual (público)
+router.get('/pozo', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT primero, segundo, tercero, total_fact, actualizado FROM pozo_premios WHERE id = 1'
+        );
+        if (rows.length === 0) {
+            return res.json({ success: true, primero: 2000000, segundo: 1000000, tercero: 500000, total_fact: 0 });
+        }
+        return res.json({ success: true, ...rows[0] });
+    } catch (err) {
+        console.error('Error en /polla/pozo:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // ── PROMOCIÓN RELÁMPAGO ──────────────────────────────────────────────────────
 // Partidos donde cualquier usuario registrado puede pronosticar sin bono,
 // con ventana de 60 minutos DESPUÉS del pitazo inicial.
