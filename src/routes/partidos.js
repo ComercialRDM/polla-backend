@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { calcularRanking, obtenerResumenPublico, obtenerPronosticosPublicos } = require('../services/rankingService');
 const { getOrSet } = require('../utils/cache');
-const { suscribir, desuscribir } = require('../utils/sse');
+const { suscribir, desuscribir, totalClientes, MAX_SSE_CONEXIONES } = require('../utils/sse');
 
 const router = express.Router();
 
@@ -78,9 +78,15 @@ router.get('/:id/pronosticos-publicos', async (req, res) => {
 });
 
 // GET /api/partidos/:id/eventos - Server-Sent Events: avisa al frontend cuando cambia
-// el ranking/marcador del partido, para refrescar sin esperar al siguiente polling
+// el ranking/marcador del partido, para refrescar sin esperar al siguiente polling.
+// Límite de 700 conexiones simultáneas para no agotar file descriptors en Render free tier.
+// Auto-cierre a los 10 minutos (el cliente reconecta automáticamente por spec SSE).
 router.get('/:id/eventos', (req, res) => {
     const { id } = req.params;
+
+    if (totalClientes() >= MAX_SSE_CONEXIONES) {
+        return res.status(503).set('Retry-After', '60').json({ success: false, error: 'Servidor ocupado, reintenta en un momento.' });
+    }
 
     res.set({
         'Content-Type': 'text/event-stream',
@@ -94,8 +100,14 @@ router.get('/:id/eventos', (req, res) => {
 
     const keepAlive = setInterval(() => res.write(': ping\n\n'), 30000);
 
+    // Fuerza reconexión a los 10 min para liberar file descriptors bajo alta carga
+    const autoClose = setTimeout(() => {
+        res.end();
+    }, 10 * 60 * 1000);
+
     req.on('close', () => {
         clearInterval(keepAlive);
+        clearTimeout(autoClose);
         desuscribir(id, res);
     });
 });

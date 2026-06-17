@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 // y abuso del envío de OTP por WhatsApp (ManyChat)
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 10,
+    limit: 30,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' },
@@ -23,7 +23,7 @@ const adminLimiter = rateLimit({
 // para frenar el registro masivo de usuarios/transacciones y el abuso de Wompi.
 const transaccionesLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 15,
+    limit: 50,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },

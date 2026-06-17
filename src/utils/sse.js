@@ -2,6 +2,13 @@
 // ranking/marcador de un partido, para evitar polling constante del frontend.
 
 const clientesPorPartido = new Map();
+const MAX_SSE_CONEXIONES = 700;
+
+function totalClientes() {
+    let n = 0;
+    for (const set of clientesPorPartido.values()) n += set.size;
+    return n;
+}
 
 function suscribir(partidoId, res) {
     const id = String(partidoId);
@@ -26,4 +33,4 @@ function notificar(partidoId) {
     }
 }
 
-module.exports = { suscribir, desuscribir, notificar };
+module.exports = { suscribir, desuscribir, notificar, totalClientes, MAX_SSE_CONEXIONES };
