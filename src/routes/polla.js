@@ -505,6 +505,56 @@ router.get('/resumen-usuario', async (req, res) => {
     }
 });
 
+// GET /api/polla/mis-pronosticos?usuario_id= - historial de pronósticos del usuario con resultados
+router.get('/mis-pronosticos', async (req, res) => {
+    const usuario_id = parseInt(req.query.usuario_id);
+    if (!usuario_id) return res.status(400).json({ success: false, error: 'Falta usuario_id' });
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT
+                pr.id,
+                pr.goles_local        AS pred_local,
+                pr.goles_visitante    AS pred_visitante,
+                pr.created_at,
+                pr.es_flash,
+                p.id                  AS partido_id,
+                p.equipo_local,
+                p.equipo_visitante,
+                p.goles_local         AS res_local,
+                p.goles_visitante     AS res_visitante,
+                p.estado,
+                p.fecha_hora_inicio,
+                CASE
+                    WHEN p.estado = 'cerrado'
+                         AND pr.goles_local = p.goles_local
+                         AND pr.goles_visitante = p.goles_visitante
+                        THEN 3
+                    WHEN p.estado = 'cerrado'
+                         AND (
+                             (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
+                             (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR
+                             (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
+                         )
+                         AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
+                        THEN 1
+                    WHEN p.estado = 'cerrado' THEN 0
+                    ELSE NULL
+                END AS puntos_partido
+             FROM pronosticos pr
+             JOIN partidos p ON p.id = pr.partido_id
+             WHERE pr.usuario_id = $1
+             ORDER BY p.fecha_hora_inicio DESC`,
+            [usuario_id]
+        );
+
+        return res.json({ success: true, pronosticos: rows });
+    } catch (err) {
+        console.error('Error en /polla/mis-pronosticos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // ── PROMOCIÓN RELÁMPAGO ──────────────────────────────────────────────────────
 // Partidos donde cualquier usuario registrado puede pronosticar sin bono,
 // con ventana de 60 minutos DESPUÉS del pitazo inicial.
