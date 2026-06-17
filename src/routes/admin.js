@@ -127,6 +127,53 @@ router.get('/2fa/estado', async (req, res) => {
     }
 });
 
+// GET /api/admin/reportes?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
+router.get('/reportes', async (req, res) => {
+    const { fecha_inicio, fecha_fin } = req.query;
+    if (!fecha_inicio || !fecha_fin) {
+        return res.status(400).json({ success: false, error: 'Faltan fecha_inicio y fecha_fin' });
+    }
+    try {
+        const { rows } = await pool.query(
+            `SELECT t.id, u.nombre, u.correo, u.celular, t.valor_pagado, t.metodo, t.estado_pago, t.fecha_creacion, t.saldo_bono
+             FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE date(t.fecha_creacion AT TIME ZONE 'America/Bogota') BETWEEN $1::date AND $2::date
+               AND t.es_test = FALSE
+             ORDER BY t.fecha_creacion DESC`,
+            [fecha_inicio, fecha_fin]
+        );
+
+        const aprobadas = rows.filter(r => r.estado_pago === 'APROBADO');
+        const ingresos  = aprobadas.reduce((acc, r) => acc + Number(r.valor_pagado), 0);
+
+        return res.json({
+            success: true,
+            resumen: {
+                total:      rows.length,
+                aprobadas:  aprobadas.length,
+                pendientes: rows.filter(r => r.estado_pago === 'PENDIENTE').length,
+                rechazadas: rows.filter(r => r.estado_pago === 'RECHAZADO').length,
+                ingresos,
+            },
+            transacciones: rows.map(t => ({
+                id:          t.id,
+                nombre:      t.nombre,
+                correo:      t.correo,
+                celular:     t.celular,
+                valorPagado: Number(t.valor_pagado),
+                saldoBono:   Number(t.saldo_bono),
+                metodo:      t.metodo,
+                estado:      t.estado_pago,
+                fecha:       new Date(t.fecha_creacion).getTime(),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/reportes:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/pendientes
 router.get('/pendientes', async (req, res) => {
     try {
