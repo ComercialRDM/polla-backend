@@ -307,6 +307,143 @@ router.delete('/test/limpiar', async (req, res) => {
     }
 });
 
+// GET /api/admin/apuestas - pronósticos paginados de un partido (100 filas/página)
+// ?partido_id=X&page=1&limit=100&search=
+router.get('/apuestas', async (req, res) => {
+    const { partido_id, page = 1, limit = 100, search = '' } = req.query;
+
+    if (!partido_id) {
+        return res.status(400).json({ success: false, error: 'Falta partido_id' });
+    }
+
+    const limitNum = Math.min(Number(limit) || 100, 500);
+    const offset   = (Math.max(Number(page), 1) - 1) * limitNum;
+    const like     = search ? `%${search}%` : '%';
+
+    try {
+        const { rows: pRows } = await pool.query(
+            `SELECT id, equipo_local, equipo_visitante, goles_local, goles_visitante, estado
+             FROM partidos WHERE id = CAST($1 AS integer) LIMIT 1`,
+            [partido_id]
+        );
+        if (pRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        const partido = pRows[0];
+
+        const [{ rows: countRows }, { rows: apRows }, { rows: resumenRows }] = await Promise.all([
+            pool.query(
+                `SELECT COUNT(*)::int AS total
+                 FROM pronosticos pr JOIN usuarios u ON u.id = pr.usuario_id
+                 WHERE pr.partido_id = CAST($1 AS integer)
+                   AND (u.nombre ILIKE $2 OR u.celular ILIKE $2)`,
+                [partido_id, like]
+            ),
+            pool.query(
+                `SELECT pr.id, u.nombre, u.celular,
+                        pr.goles_local AS pred_local, pr.goles_visitante AS pred_visitante,
+                        pr.created_at
+                 FROM pronosticos pr JOIN usuarios u ON u.id = pr.usuario_id
+                 WHERE pr.partido_id = CAST($1 AS integer)
+                   AND (u.nombre ILIKE $2 OR u.celular ILIKE $2)
+                 ORDER BY pr.created_at DESC NULLS LAST, pr.id DESC
+                 LIMIT $3 OFFSET $4`,
+                [partido_id, like, limitNum, offset]
+            ),
+            pool.query(
+                `SELECT goles_local AS pred_local, goles_visitante AS pred_visitante, COUNT(*)::int AS cantidad
+                 FROM pronosticos WHERE partido_id = CAST($1 AS integer)
+                 GROUP BY goles_local, goles_visitante
+                 ORDER BY cantidad DESC LIMIT 20`,
+                [partido_id]
+            ),
+        ]);
+
+        return res.json({
+            success: true,
+            partido,
+            total: countRows[0].total,
+            page: Number(page),
+            limit: limitNum,
+            apuestas: apRows.map(r => ({
+                id:          r.id,
+                nombre:      r.nombre,
+                celular:     r.celular,
+                predLocal:   r.pred_local,
+                predVisitante: r.pred_visitante,
+                createdAt:   r.created_at,
+                puntos:      calcPuntos(partido, r.pred_local, r.pred_visitante),
+            })),
+            resumen: resumenRows.map(r => ({
+                predLocal: r.pred_local,
+                predVisitante: r.pred_visitante,
+                cantidad: r.cantidad,
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/apuestas:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/apuestas/export - TODAS las filas sin paginación (para CSV/Excel/PDF)
+router.get('/apuestas/export', async (req, res) => {
+    const { partido_id } = req.query;
+    if (!partido_id) {
+        return res.status(400).json({ success: false, error: 'Falta partido_id' });
+    }
+
+    try {
+        const { rows: pRows } = await pool.query(
+            `SELECT id, equipo_local, equipo_visitante, goles_local, goles_visitante, estado
+             FROM partidos WHERE id = CAST($1 AS integer) LIMIT 1`,
+            [partido_id]
+        );
+        if (pRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        const partido = pRows[0];
+
+        const { rows } = await pool.query(
+            `SELECT u.nombre, u.celular,
+                    pr.goles_local AS pred_local, pr.goles_visitante AS pred_visitante,
+                    pr.created_at
+             FROM pronosticos pr JOIN usuarios u ON u.id = pr.usuario_id
+             WHERE pr.partido_id = CAST($1 AS integer)
+             ORDER BY pr.created_at DESC NULLS LAST, pr.id DESC`,
+            [partido_id]
+        );
+
+        return res.json({
+            success: true,
+            partido,
+            apuestas: rows.map(r => ({
+                nombre:      r.nombre,
+                celular:     r.celular,
+                predLocal:   r.pred_local,
+                predVisitante: r.pred_visitante,
+                createdAt:   r.created_at,
+                puntos:      calcPuntos(partido, r.pred_local, r.pred_visitante),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/apuestas/export:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+function calcPuntos(partido, predLocal, predVisitante) {
+    if (partido.estado !== 'cerrado') return null;
+    const rl = partido.goles_local;
+    const rv = partido.goles_visitante;
+    if (rl === null || rv === null) return null;
+    if (predLocal === rl && predVisitante === rv) return 3;
+    if ((rl > rv && predLocal > predVisitante) ||
+        (rl < rv && predLocal < predVisitante) ||
+        (rl === rv && predLocal === predVisitante)) return 1;
+    return 0;
+}
+
 // GET /api/admin/codigo-reset/:celular - muestra el código OTP activo para recuperar contraseña
 router.get('/codigo-reset/:celular', async (req, res) => {
     const celular = String(req.params.celular || '').replace(/[^0-9+]/g, '');

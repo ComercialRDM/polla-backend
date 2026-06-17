@@ -257,6 +257,12 @@ app.listen(PORT, async () => {
     }
 
     try {
+        await pool.query(`ALTER TABLE pronosticos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`);
+    } catch (err) {
+        console.error('Error aplicando migración de created_at en pronosticos:', err.message);
+    }
+
+    try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS redenciones (
                 id               SERIAL PRIMARY KEY,
