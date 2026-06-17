@@ -127,69 +127,6 @@ router.get('/2fa/estado', async (req, res) => {
     }
 });
 
-// POST /api/admin/limpiar-pruebas — TEMPORAL: borra transacciones de prueba conservando solo Ricardo Angulo Dams
-router.post('/limpiar-pruebas', async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-
-        // Identificar transacción real a conservar (nombre está en usuarios, no en transacciones)
-        const { rows: reales } = await client.query(
-            `SELECT t.id FROM transacciones t
-             JOIN usuarios u ON u.id = t.usuario_id
-             WHERE u.nombre ILIKE '%Ricardo Angulo%' AND t.es_test = FALSE`
-        );
-        if (reales.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ success: false, error: 'No se encontró la transacción de Ricardo Angulo Dams' });
-        }
-        const idsConservar = reales.map(r => r.id);
-
-        // Borrar pronósticos de transacciones a eliminar
-        const { rowCount: pronBorrados } = await client.query(
-            `DELETE FROM pronosticos WHERE transaccion_id IS NOT NULL AND transaccion_id != ALL($1::int[])`,
-            [idsConservar]
-        );
-
-        // Borrar redenciones de transacciones a eliminar
-        const { rowCount: redBorradas } = await client.query(
-            `DELETE FROM redenciones WHERE transaccion_id != ALL($1::int[])`,
-            [idsConservar]
-        );
-
-        // Borrar transacciones de prueba
-        const { rowCount: transBorradas } = await client.query(
-            `DELETE FROM transacciones WHERE id != ALL($1::int[])`,
-            [idsConservar]
-        );
-
-        // Recalcular pozo con solo la transacción real
-        const { rows: totales } = await client.query(
-            `SELECT COALESCE(SUM(valor_pagado),0)::bigint AS total FROM transacciones WHERE estado_pago='APROBADO'`
-        );
-        const totalFact = Number(totales[0].total);
-        await client.query(
-            `UPDATE pozo_premios SET total_fact=$1, primero=2000000, segundo=1000000, tercero=500000, actualizado=now() WHERE id=1`,
-            [totalFact]
-        );
-
-        await client.query('COMMIT');
-        return res.json({
-            success: true,
-            transaccionesEliminadas: transBorradas,
-            pronosticosEliminados: pronBorrados,
-            redencionesEliminadas: redBorradas,
-            transaccionesConservadas: idsConservar.length,
-        });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Error en limpiar-pruebas:', err);
-        return res.status(500).json({ success: false, error: err.message });
-    } finally {
-        client.release();
-    }
-});
-
 // GET /api/admin/reportes?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
 router.get('/reportes', async (req, res) => {
     const { fecha_inicio, fecha_fin } = req.query;
