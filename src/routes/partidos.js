@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
     try {
         const partidos = await getOrSet('partidos:lista', TTL_LISTA_PARTIDOS_MS, async () => {
             const { rows } = await pool.query(
-                `SELECT id, equipo_local, equipo_visitante, fecha_hora_inicio, estado, goles_local, goles_visitante
+                `SELECT id, equipo_local, equipo_visitante, fecha_hora_inicio, estado, goles_local, goles_visitante, fase
                  FROM partidos
                  ORDER BY fecha_hora_inicio ASC`
             );

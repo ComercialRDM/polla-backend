@@ -99,18 +99,22 @@ router.get('/comprobante/:id', async (req, res) => {
 
 // POST /api/admin/partidos
 router.post('/partidos', async (req, res) => {
-    const { equipo_local, equipo_visitante, fecha_hora_inicio } = req.body;
+    const { equipo_local, equipo_visitante, fecha_hora_inicio, fase = 'grupos' } = req.body;
+    const FASES_VALIDAS = ['grupos', 'dieciseisavos', 'octavos', 'cuartos', 'semifinal', 'final'];
 
     if (!equipo_local || !equipo_visitante || !fecha_hora_inicio) {
         return res.status(400).json({ success: false, error: 'Faltan campos: equipo_local, equipo_visitante, fecha_hora_inicio' });
     }
+    if (!FASES_VALIDAS.includes(fase)) {
+        return res.status(400).json({ success: false, error: 'Fase inválida' });
+    }
 
     try {
         const { rows } = await pool.query(
-            `INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio)
-             VALUES ($1, $2, $3)
-             RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, estado`,
-            [equipo_local, equipo_visitante, fecha_hora_inicio]
+            `INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, fase)
+             VALUES ($1, $2, $3, $4)
+             RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, estado, fase`,
+            [equipo_local, equipo_visitante, fecha_hora_inicio, fase]
         );
         invalidate('partidos:lista');
         return res.json({ success: true, partido: rows[0] });
@@ -123,7 +127,7 @@ router.post('/partidos', async (req, res) => {
 // PATCH /api/admin/partidos/:id - corrige fecha, marcador o estado de un partido
 router.patch('/partidos/:id', async (req, res) => {
     const { id } = req.params;
-    const { fecha_hora_inicio, goles_local, goles_visitante, estado } = req.body;
+    const { fecha_hora_inicio, goles_local, goles_visitante, estado, fase } = req.body;
 
     if (estado && !['activo', 'cerrado'].includes(estado)) {
         return res.status(400).json({ success: false, error: 'Estado inválido' });
@@ -137,6 +141,7 @@ router.patch('/partidos/:id', async (req, res) => {
     if (goles_local !== undefined) { campos.push(`goles_local = $${i++}`); valores.push(goles_local); }
     if (goles_visitante !== undefined) { campos.push(`goles_visitante = $${i++}`); valores.push(goles_visitante); }
     if (estado !== undefined) { campos.push(`estado = $${i++}`); valores.push(estado); }
+    if (fase !== undefined) { campos.push(`fase = $${i++}`); valores.push(fase); }
 
     if (campos.length === 0) {
         return res.status(400).json({ success: false, error: 'No hay campos para actualizar' });
@@ -146,7 +151,7 @@ router.patch('/partidos/:id', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `UPDATE partidos SET ${campos.join(', ')} WHERE id = $${i} RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, goles_local, goles_visitante, estado`,
+            `UPDATE partidos SET ${campos.join(', ')} WHERE id = $${i} RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, goles_local, goles_visitante, estado, fase`,
             valores
         );
         if (rows.length === 0) {

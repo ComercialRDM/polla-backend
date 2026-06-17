@@ -1,15 +1,18 @@
 // Planes de bonos disponibles: valor pagado (COP) -> { saldoBono, intentos }
 const PLANES = {
-    50000: { saldoBono: 65000, intentos: 1 },
-    100000: { saldoBono: 130000, intentos: 2 },
-    200000: { saldoBono: 270000, intentos: 5 },
+    25000:   { saldoBono: 30000,   intentos: 1  },
+    50000:   { saldoBono: 70000,   intentos: 2  },
+    100000:  { saldoBono: 130000,  intentos: 4  },
+    200000:  { saldoBono: 250000,  intentos: 8  },
+    500000:  { saldoBono: 650000,  intentos: 20 },
+    1000000: { saldoBono: 1500000, intentos: 40 },
 };
 
-// 1 cupo de pronóstico = $50.000 de recarga (1 partido distinto por cupo)
-const CUPO_VALOR = 50000;
+// 1 cupo de pronóstico = $25.000 de recarga
+const CUPO_VALOR = 25000;
 
 // Rango permitido para montos personalizados ("Otro monto")
-const MONTO_PERSONALIZADO_MIN = 200000;
+const MONTO_PERSONALIZADO_MIN = 25000;
 const MONTO_PERSONALIZADO_MAX = 2000000;
 
 // Bonificación del bono de servicio para montos personalizados (~30% extra)

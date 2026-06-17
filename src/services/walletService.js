@@ -19,7 +19,7 @@ async function obtenerSaldoUsuario(usuarioId) {
     );
 
     const { rows: usadosRows } = await pool.query(
-        'SELECT COUNT(*)::int AS cupos_usados FROM pronosticos WHERE usuario_id = $1',
+        'SELECT COALESCE(SUM(cupos_costo), 0)::int AS cupos_usados FROM pronosticos WHERE usuario_id = $1',
         [usuarioId]
     );
 

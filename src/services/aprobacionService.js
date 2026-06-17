@@ -49,9 +49,9 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
                 );
                 transaccion = actualizada[0];
 
-                // 5 puntos bonus al referidor en el ranking de la polla
+                // 20 puntos bonus al referidor (tope: 500)
                 await client.query(
-                    'UPDATE usuarios SET puntos_bonus = puntos_bonus + 5 WHERE id = $1',
+                    'UPDATE usuarios SET puntos_bonus = LEAST(puntos_bonus + 20, 500) WHERE id = $1',
                     [referidorRows[0].usuario_id]
                 );
             }

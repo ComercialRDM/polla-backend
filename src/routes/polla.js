@@ -10,6 +10,18 @@ const { generarICS } = require('../services/calendarioService');
 
 const router = express.Router();
 
+const COSTO_CUPO_FASE = {
+    grupos: 1, dieciseisavos: 1, octavos: 1,
+    cuartos: 2, semifinal: 2, final: 4,
+};
+
+function puntajeExacto(fase) {
+    return ({ grupos: 100, dieciseisavos: 120, octavos: 200, cuartos: 250, semifinal: 800, final: 2000 })[fase] ?? 100;
+}
+function puntajeTendencia(fase) {
+    return ({ grupos: 50, dieciseisavos: 60, octavos: 100, cuartos: 125, semifinal: 400, final: 1000 })[fase] ?? 50;
+}
+
 // GET /api/polla/bono/:token - imagen del bono digital (PNG), pública para poder enviarla por WhatsApp
 router.get('/bono/:token', async (req, res) => {
     const { token } = req.params;
@@ -108,6 +120,7 @@ router.get('/info', async (req, res) => {
 
         const { rows: partidoRows } = await pool.query(
             `SELECT p.id, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio, p.estado AS estado_partido,
+                    p.fase,
                     pr.goles_local AS pronostico_local, pr.goles_visitante AS pronostico_visitante
              FROM partidos p
              LEFT JOIN pronosticos pr ON pr.partido_id = p.id AND pr.usuario_id = $1
@@ -122,6 +135,8 @@ router.get('/info', async (req, res) => {
             equipo_visitante: p.equipo_visitante,
             fecha_hora_inicio: p.fecha_hora_inicio,
             estado_partido: p.estado_partido,
+            fase: p.fase,
+            cupos_costo: COSTO_CUPO_FASE[p.fase] ?? 1,
             ya_pronosticado: p.pronostico_local !== null,
             pronostico: p.pronostico_local !== null
                 ? { local: p.pronostico_local, visitante: p.pronostico_visitante }
@@ -274,9 +289,9 @@ router.post('/votar', async (req, res) => {
         const inicioPartido = new Date(partido.fecha_hora_inicio);
         const msRestantes = inicioPartido.getTime() - ahoraUTC.getTime();
 
-        if (partido.estado !== 'activo' || msRestantes < 1000) {
+        if (partido.estado !== 'activo' || msRestantes < 5 * 60 * 1000) {
             await client.query('ROLLBACK');
-            return res.status(403).json({ success: false, error: 'La votación para este partido ya está cerrada' });
+            return res.status(403).json({ success: false, error: 'La votación cierra 5 minutos antes del pitazo' });
         }
 
         // No permitir más de un pronóstico por partido
@@ -289,28 +304,31 @@ router.post('/votar', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Ya registraste tu pronóstico para este partido' });
         }
 
-        // Validar que el usuario tenga al menos 1 cupo disponible
+        // Costo en cupos según la fase del partido
+        const costoPartido = COSTO_CUPO_FASE[partido.fase] ?? 1;
+
+        // Validar que el usuario tenga cupos suficientes para esta fase
         const cuposTotales = transaccionRows.reduce(
             (acc, t) => acc + Math.floor(t.valor_pagado / CUPO_VALOR),
             0
         );
         const { rows: usadosRows } = await client.query(
-            'SELECT COUNT(*)::int AS cupos_usados FROM pronosticos WHERE usuario_id = $1',
+            'SELECT COALESCE(SUM(cupos_costo), 0)::int AS cupos_usados FROM pronosticos WHERE usuario_id = $1',
             [usuario_id]
         );
         const cuposUsados = usadosRows[0].cupos_usados;
         const cuposDisponibles = Math.max(cuposTotales - cuposUsados, 0);
 
-        if (cuposDisponibles < 1) {
+        if (cuposDisponibles < costoPartido) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ success: false, error: 'No tienes cupos disponibles. Recarga para seguir pronosticando.' });
+            return res.status(400).json({ success: false, error: `No tienes cupos suficientes. Este partido requiere ${costoPartido} cupo(s).` });
         }
 
-        // Insertar el pronóstico (se asocia a una de las transacciones aprobadas del usuario para mantener la FK)
+        // Insertar el pronóstico registrando el costo en cupos de esta fase
         await client.query(
-            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [transaccionRows[0].id, usuario_id, partido_id, local, visitante]
+            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, cupos_costo)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [transaccionRows[0].id, usuario_id, partido_id, local, visitante, costoPartido]
         );
 
         await client.query('COMMIT');
@@ -321,7 +339,7 @@ router.post('/votar', async (req, res) => {
         notificar(partido_id);
 
         const dineroRecargado = transaccionRows.reduce((acc, t) => acc + t.valor_pagado, 0);
-        const nuevosCuposUsados = cuposUsados + 1;
+        const nuevosCuposUsados = cuposUsados + costoPartido;
         const nuevosCuposDisponibles = Math.max(cuposTotales - nuevosCuposUsados, 0);
         const nuevoDineroDisponible = Math.max(dineroRecargado - nuevosCuposUsados * CUPO_VALOR, 0);
 
@@ -391,10 +409,10 @@ router.post('/registrar-compartida', async (req, res) => {
         let puntos_ganados = 0;
         if (rowCount > 0) {
             await client.query(
-                'UPDATE usuarios SET puntos_bonus = puntos_bonus + 1 WHERE id = $1',
+                'UPDATE usuarios SET puntos_bonus = LEAST(puntos_bonus + 10, 200) WHERE id = $1',
                 [usuario_id]
             );
-            puntos_ganados = 1;
+            puntos_ganados = 10;
         }
 
         await client.query('COMMIT');
@@ -424,7 +442,7 @@ router.get('/resumen-usuario', async (req, res) => {
         );
         const intentos_realizados = totalRows[0].total;
 
-        // Puntos: correctos (marcador exacto) y parciales (solo ganador)
+        // Puntos: exactos y parciales con escala por fase del partido
         const { rows: puntosRows } = await pool.query(
             `SELECT
                 COUNT(*) FILTER (
@@ -440,7 +458,40 @@ router.get('/resumen-usuario', async (req, res) => {
                         (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
                     )
                     AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
-                )::int AS parciales
+                )::int AS parciales,
+                COALESCE(SUM(
+                    CASE
+                        WHEN p.estado = 'cerrado'
+                             AND pr.goles_local = p.goles_local
+                             AND pr.goles_visitante = p.goles_visitante
+                        THEN CASE p.fase
+                            WHEN 'grupos'        THEN 100
+                            WHEN 'dieciseisavos' THEN 120
+                            WHEN 'octavos'       THEN 200
+                            WHEN 'cuartos'       THEN 250
+                            WHEN 'semifinal'     THEN 800
+                            WHEN 'final'         THEN 2000
+                            ELSE 100
+                        END
+                        WHEN p.estado = 'cerrado'
+                             AND (
+                                 (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
+                                 (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR
+                                 (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
+                             )
+                             AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
+                        THEN CASE p.fase
+                            WHEN 'grupos'        THEN 50
+                            WHEN 'dieciseisavos' THEN 60
+                            WHEN 'octavos'       THEN 100
+                            WHEN 'cuartos'       THEN 125
+                            WHEN 'semifinal'     THEN 400
+                            WHEN 'final'         THEN 1000
+                            ELSE 50
+                        END
+                        ELSE 0
+                    END
+                ), 0)::int AS puntos_pronosticos
              FROM pronosticos pr
              JOIN partidos p ON p.id = pr.partido_id
              WHERE pr.usuario_id = $1`,
@@ -448,7 +499,7 @@ router.get('/resumen-usuario', async (req, res) => {
         );
         const exactos = puntosRows[0].exactos;
         const parciales = puntosRows[0].parciales;
-        const puntos_pronosticos = exactos * 3 + parciales * 1;
+        const puntos_pronosticos = puntosRows[0].puntos_pronosticos;
 
         // Puntos bonus (compartidas + referidos)
         const { rows: bonusRows } = await pool.query(
@@ -464,20 +515,29 @@ router.get('/resumen-usuario', async (req, res) => {
              FROM (
                  SELECT pts FROM (
                      SELECT pr2.usuario_id,
-                         COUNT(*) FILTER (
-                             WHERE p2.estado = 'cerrado'
-                             AND pr2.goles_local = p2.goles_local
-                             AND pr2.goles_visitante = p2.goles_visitante
-                         ) * 3 +
-                         COUNT(*) FILTER (
-                             WHERE p2.estado = 'cerrado'
-                             AND (
-                                 (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                                 (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                                 (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                             )
-                             AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                         ) + COALESCE(u2.puntos_bonus, 0) AS pts
+                         COALESCE(SUM(
+                             CASE
+                                 WHEN p2.estado = 'cerrado'
+                                      AND pr2.goles_local = p2.goles_local
+                                      AND pr2.goles_visitante = p2.goles_visitante
+                                 THEN CASE p2.fase
+                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
+                                     WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100
+                                 END
+                                 WHEN p2.estado = 'cerrado'
+                                      AND (
+                                          (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                                          (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                                          (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                                      )
+                                      AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                                 THEN CASE p2.fase
+                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
+                                     WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50
+                                 END
+                                 ELSE 0
+                             END
+                         ), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
                      FROM pronosticos pr2
                      JOIN partidos p2 ON p2.id = pr2.partido_id
                      JOIN usuarios u2 ON u2.id = pr2.usuario_id
@@ -499,20 +559,29 @@ router.get('/resumen-usuario', async (req, res) => {
              FROM (
                  SELECT pts FROM (
                      SELECT pr2.usuario_id,
-                         COUNT(*) FILTER (
-                             WHERE p2.estado = 'cerrado'
-                             AND pr2.goles_local = p2.goles_local
-                             AND pr2.goles_visitante = p2.goles_visitante
-                         ) * 3 +
-                         COUNT(*) FILTER (
-                             WHERE p2.estado = 'cerrado'
-                             AND (
-                                 (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                                 (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                                 (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                             )
-                             AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                         ) + COALESCE(u2.puntos_bonus, 0) AS pts
+                         COALESCE(SUM(
+                             CASE
+                                 WHEN p2.estado = 'cerrado'
+                                      AND pr2.goles_local = p2.goles_local
+                                      AND pr2.goles_visitante = p2.goles_visitante
+                                 THEN CASE p2.fase
+                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
+                                     WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100
+                                 END
+                                 WHEN p2.estado = 'cerrado'
+                                      AND (
+                                          (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                                          (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                                          (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                                      )
+                                      AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                                 THEN CASE p2.fase
+                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
+                                     WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50
+                                 END
+                                 ELSE 0
+                             END
+                         ), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
                      FROM pronosticos pr2
                      JOIN partidos p2 ON p2.id = pr2.partido_id
                      JOIN usuarios u2 ON u2.id = pr2.usuario_id
@@ -573,12 +642,21 @@ router.get('/mis-pronosticos', async (req, res) => {
                 p.goles_local         AS res_local,
                 p.goles_visitante     AS res_visitante,
                 p.estado,
+                p.fase,
                 p.fecha_hora_inicio,
                 CASE
                     WHEN p.estado = 'cerrado'
                          AND pr.goles_local = p.goles_local
                          AND pr.goles_visitante = p.goles_visitante
-                        THEN 3
+                        THEN CASE p.fase
+                            WHEN 'grupos'        THEN 100
+                            WHEN 'dieciseisavos' THEN 120
+                            WHEN 'octavos'       THEN 200
+                            WHEN 'cuartos'       THEN 250
+                            WHEN 'semifinal'     THEN 800
+                            WHEN 'final'         THEN 2000
+                            ELSE 100
+                        END
                     WHEN p.estado = 'cerrado'
                          AND (
                              (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
@@ -586,7 +664,15 @@ router.get('/mis-pronosticos', async (req, res) => {
                              (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
                          )
                          AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
-                        THEN 1
+                        THEN CASE p.fase
+                            WHEN 'grupos'        THEN 50
+                            WHEN 'dieciseisavos' THEN 60
+                            WHEN 'octavos'       THEN 100
+                            WHEN 'cuartos'       THEN 125
+                            WHEN 'semifinal'     THEN 400
+                            WHEN 'final'         THEN 1000
+                            ELSE 50
+                        END
                     WHEN p.estado = 'cerrado' THEN 0
                     ELSE NULL
                 END AS puntos_partido
