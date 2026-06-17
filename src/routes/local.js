@@ -39,13 +39,16 @@ router.post('/login', async (req, res) => {
 
 router.use(localAuth);
 
-// GET /api/local/bono/:token - datos del bono para verificar antes de marcarlo como consumido
+// GET /api/local/bono/:token - datos del bono para verificar y redimir
 router.get('/bono/:token', async (req, res) => {
     const { token } = req.params;
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.valor_pagado, t.saldo_bono, t.estado_pago, t.bono_consumido, t.bono_consumido_en, u.nombre, u.celular
+            `SELECT t.id, t.valor_pagado, t.saldo_bono,
+                    COALESCE(t.saldo_disponible, t.saldo_bono) AS saldo_disponible,
+                    t.estado_pago, t.bono_consumido, t.bono_consumido_en,
+                    u.nombre, u.celular
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1
@@ -62,20 +65,113 @@ router.get('/bono/:token', async (req, res) => {
             return res.status(409).json({ success: false, error: 'Este bono no está aprobado' });
         }
 
+        // Historial de redenciones anteriores
+        const { rows: redenciones } = await pool.query(
+            `SELECT r.monto, r.saldo_antes, r.saldo_despues, r.created_at,
+                    lu.nombre_local, lu.usuario AS local_usuario
+             FROM redenciones r
+             JOIN local_usuarios lu ON lu.id = r.local_usuario_id
+             WHERE r.transaccion_id = $1
+             ORDER BY r.created_at DESC`,
+            [bono.id]
+        );
+
         return res.json({
             success: true,
             bono: {
                 nombre: bono.nombre,
                 celular: bono.celular,
                 saldo_bono: bono.saldo_bono,
+                saldo_disponible: bono.saldo_disponible,
                 valor_pagado: bono.valor_pagado,
                 consumido: bono.bono_consumido,
                 consumido_en: bono.bono_consumido_en,
+                redenciones,
             },
         });
     } catch (err) {
         console.error('Error en /local/bono/:token GET:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/local/bono/redimir - redención parcial o total del saldo del bono
+router.post('/bono/redimir', async (req, res) => {
+    const { token_acceso, monto } = req.body;
+    const localUsuarioId = req.local?.id;
+
+    if (!token_acceso || !monto || Number(monto) <= 0) {
+        return res.status(400).json({ success: false, error: 'Datos inválidos' });
+    }
+
+    const montoInt = Math.round(Number(monto));
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+            `SELECT t.id, t.saldo_bono,
+                    COALESCE(t.saldo_disponible, t.saldo_bono) AS saldo_disponible,
+                    t.bono_consumido, t.estado_pago, u.nombre
+             FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1
+             FOR UPDATE`,
+            [token_acceso]
+        );
+
+        if (rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Bono no encontrado' });
+        }
+
+        const b = rows[0];
+        if (b.estado_pago !== 'APROBADO') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ success: false, error: 'Bono no aprobado' });
+        }
+
+        const saldoAntes = b.saldo_disponible;
+        if (montoInt > saldoAntes) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                success: false,
+                error: `Saldo insuficiente. Disponible: $${saldoAntes.toLocaleString('es-CO')}`,
+            });
+        }
+
+        const saldoDespues = saldoAntes - montoInt;
+
+        await client.query(
+            `UPDATE transacciones
+             SET saldo_disponible   = $1,
+                 bono_consumido     = CASE WHEN $1 = 0 THEN TRUE ELSE bono_consumido END,
+                 bono_consumido_en  = CASE WHEN $1 = 0 AND NOT bono_consumido THEN now() ELSE bono_consumido_en END
+             WHERE token_acceso = $2`,
+            [saldoDespues, token_acceso]
+        );
+
+        await client.query(
+            `INSERT INTO redenciones (transaccion_id, local_usuario_id, monto, saldo_antes, saldo_despues)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [b.id, localUsuarioId, montoInt, saldoAntes, saldoDespues]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            nombre: b.nombre,
+            monto: montoInt,
+            saldo_antes: saldoAntes,
+            saldo_despues: saldoDespues,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en /local/bono/redimir:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
     }
 });
 

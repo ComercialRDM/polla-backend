@@ -245,6 +245,33 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de pronosticos flash:', err.message);
     }
 
+    try {
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS saldo_disponible INTEGER`);
+        await pool.query(`
+            UPDATE transacciones
+            SET saldo_disponible = saldo_bono
+            WHERE saldo_disponible IS NULL AND estado_pago = 'APROBADO'
+        `);
+    } catch (err) {
+        console.error('Error aplicando migración de saldo_disponible:', err.message);
+    }
+
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS redenciones (
+                id               SERIAL PRIMARY KEY,
+                transaccion_id   INTEGER NOT NULL REFERENCES transacciones(id),
+                local_usuario_id INTEGER NOT NULL REFERENCES local_usuarios(id),
+                monto            INTEGER NOT NULL,
+                saldo_antes      INTEGER NOT NULL,
+                saldo_despues    INTEGER NOT NULL,
+                created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla redenciones:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

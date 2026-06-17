@@ -88,7 +88,10 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
     const composite = [{ input: Buffer.from(overlaySvg), top: 0, left: 0 }];
 
     if (tokenAcceso) {
-        const qrBuffer = await QRCode.toBuffer(tokenAcceso, {
+        const qrContenido = process.env.FRONTEND_URL
+            ? `${process.env.FRONTEND_URL}/adminqr?token=${tokenAcceso}`
+            : tokenAcceso;
+        const qrBuffer = await QRCode.toBuffer(qrContenido, {
             type: 'png',
             width: QR.size - QR.padding * 2,
             margin: 0,
