@@ -641,4 +641,75 @@ router.patch('/bonos-colombia/:id', async (req, res) => {
     }
 });
 
+// GET /api/admin/local-usuarios - listar cuentas Admin QR
+router.get('/local-usuarios', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, usuario, nombre_local, correo, activo, fecha_creacion
+             FROM local_usuarios ORDER BY fecha_creacion DESC`
+        );
+        return res.json({ success: true, usuarios: rows });
+    } catch (err) {
+        console.error('Error en GET /admin/local-usuarios:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/local-usuarios - crear nueva cuenta Admin QR
+router.post('/local-usuarios', async (req, res) => {
+    const { usuario, password, nombre_local, correo } = req.body;
+    if (!usuario || !password) return res.status(400).json({ success: false, error: 'Faltan usuario y contraseña' });
+
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        const { rows } = await pool.query(
+            `INSERT INTO local_usuarios (usuario, password_hash, nombre_local, correo)
+             VALUES ($1, $2, $3, $4) RETURNING id, usuario, nombre_local, correo, activo, fecha_creacion`,
+            [usuario.trim(), hash, nombre_local?.trim() || null, correo?.trim().toLowerCase() || null]
+        );
+        return res.json({ success: true, usuario: rows[0] });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ success: false, error: 'Ese nombre de usuario ya existe' });
+        console.error('Error en POST /admin/local-usuarios:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/local-usuarios/:id/reset-password - generar contraseña temporal y mostrarla al admin
+router.patch('/local-usuarios/:id/reset-password', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { rows } = await pool.query('SELECT id, nombre_local FROM local_usuarios WHERE id = $1', [id]);
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
+
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let tempPass = '';
+        for (let i = 0; i < 8; i++) tempPass += chars[Math.floor(Math.random() * chars.length)];
+
+        const hash = await bcrypt.hash(tempPass, 10);
+        await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, id]);
+
+        return res.json({ success: true, tempPass });
+    } catch (err) {
+        console.error('Error en PATCH /admin/local-usuarios/:id/reset-password:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/local-usuarios/:id/toggle - activar/desactivar cuenta
+router.patch('/local-usuarios/:id/toggle', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { rows } = await pool.query(
+            'UPDATE local_usuarios SET activo = NOT activo WHERE id = $1 RETURNING id, activo',
+            [id]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
+        return res.json({ success: true, activo: rows[0].activo });
+    } catch (err) {
+        console.error('Error en PATCH /admin/local-usuarios/:id/toggle:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

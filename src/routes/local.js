@@ -37,6 +37,41 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// POST /api/local/reset-password - envía contraseña temporal al correo del local (no requiere auth)
+router.post('/reset-password', async (req, res) => {
+    const { correo } = req.body;
+    if (!correo) return res.status(400).json({ success: false, error: 'Falta correo' });
+
+    try {
+        const { rows } = await pool.query(
+            'SELECT id, nombre_local FROM local_usuarios WHERE correo = $1 AND activo = TRUE',
+            [correo.trim().toLowerCase()]
+        );
+
+        if (rows.length > 0) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let tempPass = '';
+            for (let i = 0; i < 8; i++) tempPass += chars[Math.floor(Math.random() * chars.length)];
+
+            const hash = await bcrypt.hash(tempPass, 10);
+            await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
+
+            const { enviarCorreoResetLocalPassword } = require('../services/emailService');
+            enviarCorreoResetLocalPassword({
+                destinatario: correo.trim().toLowerCase(),
+                nombre: rows[0].nombre_local,
+                tempPass,
+            }).catch(err => console.error('Error enviando correo reset local:', err.message));
+        }
+
+        // Siempre responder success para no revelar si el correo existe
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /local/reset-password:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 router.use(localAuth);
 
 // GET /api/local/bono/:token - datos del bono para verificar y redimir

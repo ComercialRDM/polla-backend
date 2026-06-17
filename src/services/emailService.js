@@ -204,4 +204,32 @@ async function enviarCorreoBonoColWinner({ destinatario, nombre, partido, monto 
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner };
+/**
+ * Envía una contraseña temporal a la cuenta de un local (Admin QR).
+ */
+async function enviarCorreoResetLocalPassword({ destinatario, nombre, tempPass }) {
+    const transporter = crearTransporter();
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #FCD116;">🔑 Contraseña temporal — Admin QR</h1>
+        <p>Hola <strong>${nombre || 'Administrador'}</strong>,</p>
+        <p>Se ha generado una contraseña temporal para tu cuenta de <strong>Admin QR</strong> en La Retoucherie de Manuela:</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #18181b; background: #FCD116; padding: 16px 32px; border-radius: 12px; font-family: monospace;">
+                ${tempPass}
+            </span>
+        </div>
+        <p>Usa esta contraseña para ingresar. Por seguridad, pídele al administrador que la actualice pronto.</p>
+        <p style="font-size: 12px; color: #71717a; margin-top: 24px;">La Retoucherie de Manuela · Admin QR</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `🔑 Tu contraseña temporal — Admin QR La Retoucherie`,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword };

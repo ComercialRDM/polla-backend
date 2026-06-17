@@ -178,10 +178,12 @@ app.listen(PORT, async () => {
                 usuario         TEXT UNIQUE NOT NULL,
                 password_hash   TEXT NOT NULL,
                 nombre_local    TEXT,
+                correo          TEXT,
                 activo          BOOLEAN NOT NULL DEFAULT TRUE,
                 fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         `);
+        await pool.query(`ALTER TABLE local_usuarios ADD COLUMN IF NOT EXISTS correo TEXT`);
 
         // Si la tabla está vacía, se crean las cuentas de los locales a partir de
         // LOCAL_SEED_USUARIO_1..5 / LOCAL_SEED_PASSWORD_1..5 / LOCAL_SEED_NOMBRE_1..5
