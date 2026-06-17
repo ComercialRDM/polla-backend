@@ -105,7 +105,9 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         try {
             const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${transaccion.token_acceso}`;
             const mensaje = `¡Gracias por tu compra, ${usuario.nombre}! 🇨🇴\n\n`
-                + `Aquí está tu Bono Digital de $${transaccion.saldo_bono.toLocaleString('es-CO')} para servicios de La Retoucherie.\n\n`
+                + `🎫 Tu Bono Digital: $${transaccion.saldo_bono.toLocaleString('es-CO')} para servicios de La Retoucherie.\n`
+                + `📋 Código: ${transaccion.token_acceso}\n\n`
+                + `Presenta el QR de esta imagen en el local o dicta el código al momento de redimir.\n\n`
                 + `Ya quedaste inscrito en la Polla Mundialista para ${partido.equipo_local} vs ${partido.equipo_visitante} con ${transaccion.intentos_totales} intento(s).\n\n`
                 + `Ingresa aquí para registrar tu pronóstico: ${linkPolla}`;
 
