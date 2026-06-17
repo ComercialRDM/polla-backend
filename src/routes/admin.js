@@ -820,14 +820,14 @@ router.get('/usuarios', async (req, res) => {
                 u.nombre,
                 u.correo,
                 u.celular,
-                u.fecha_creacion,
+                u.fecha_registro,
                 COUNT(t.id) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE) AS compras_aprobadas,
                 COALESCE(SUM(t.valor_pagado) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE), 0) AS total_pagado,
                 MAX(t.fecha_creacion) FILTER (WHERE t.es_test = FALSE) AS ultima_transaccion
              FROM usuarios u
              LEFT JOIN transacciones t ON t.usuario_id = u.id
              GROUP BY u.id
-             ORDER BY u.fecha_creacion DESC`
+             ORDER BY u.fecha_registro DESC`
         );
         return res.json({ success: true, total: rows.length, usuarios: rows });
     } catch (err) {
