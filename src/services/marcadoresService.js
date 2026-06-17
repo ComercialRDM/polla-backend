@@ -7,8 +7,8 @@ const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
 // football-data.org (plan gratuito) permite 10 solicitudes por minuto.
-// 10s = 6 solicitudes/minuto, deja margen para no llegar al límite.
-const INTERVALO_MS = 10 * 1000;
+// 30s = 2 solicitudes/minuto, más estable y menor tasa de errores de red.
+const INTERVALO_MS = 30 * 1000;
 
 /**
  * Consulta football-data.org y actualiza el marcador y estado de los
@@ -93,7 +93,12 @@ function iniciarMonitorMarcadores() {
                 console.warn(`football-data.org respondió 429, pausando monitoreo ${PAUSA_TRAS_429_MS / 1000}s`);
                 return;
             }
-            console.error('Error en actualizarMarcadores:', err.response?.status, err.message);
+            const esErrorRed = err.code === 'ECONNRESET' || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT';
+            if (esErrorRed) {
+                console.warn(`actualizarMarcadores: error de red transitorio (${err.code}), reintentará en ${INTERVALO_MS / 1000}s`);
+                return;
+            }
+            console.error('Error en actualizarMarcadores:', err.response?.status ?? err.code, err.message);
         });
     }, INTERVALO_MS);
 }
