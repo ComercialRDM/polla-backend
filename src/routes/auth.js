@@ -31,10 +31,11 @@ function generarCodigoOTP() {
 
 // POST /api/auth/registro - crea la cuenta (celular + contraseña + nombre) o reclama una cuenta existente
 router.post('/registro', async (req, res) => {
-    const { celular, password, nombre, equipos_favoritos } = req.body;
+    const { celular, password, nombre, correo, equipos_favoritos } = req.body;
 
     const celularNormalizado = normalizarCelular(celular);
     const nombreLimpio = String(nombre || '').trim();
+    const correoLimpio = String(correo || '').trim().toLowerCase() || null;
 
     if (!celularNormalizado || celularNormalizado.length < 7) {
         return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
@@ -42,8 +43,11 @@ router.post('/registro', async (req, res) => {
     if (!nombreLimpio) {
         return res.status(400).json({ success: false, error: 'Ingresa tu nombre completo' });
     }
-    if (!password || password.length < 6) {
-        return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres' });
+    if (!password || password.length < 8) {
+        return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+        return res.status(400).json({ success: false, error: 'La contraseña debe tener mayúscula, minúscula y número' });
     }
 
     const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
@@ -63,16 +67,16 @@ router.post('/registro', async (req, res) => {
             }
 
             const { rows } = await pool.query(
-                `UPDATE usuarios SET nombre = $1, password_hash = $2, equipos_favoritos = $3 WHERE id = $4
-                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
-                [nombreLimpio, passwordHash, equipos, existentes[0].id]
+                `UPDATE usuarios SET nombre = $1, password_hash = $2, correo = $3, equipos_favoritos = $4 WHERE id = $5
+                 RETURNING id, nombre, celular, correo, equipos_favoritos, calendario_token`,
+                [nombreLimpio, passwordHash, correoLimpio, equipos, existentes[0].id]
             );
             usuario = rows[0];
         } else {
             const { rows } = await pool.query(
-                `INSERT INTO usuarios (nombre, celular, password_hash, equipos_favoritos) VALUES ($1, $2, $3, $4)
-                 RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
-                [nombreLimpio, celularNormalizado, passwordHash, equipos]
+                `INSERT INTO usuarios (nombre, celular, correo, password_hash, equipos_favoritos) VALUES ($1, $2, $3, $4, $5)
+                 RETURNING id, nombre, celular, correo, equipos_favoritos, calendario_token`,
+                [nombreLimpio, celularNormalizado, correoLimpio, passwordHash, equipos]
             );
             usuario = rows[0];
         }
