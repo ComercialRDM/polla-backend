@@ -401,7 +401,7 @@ router.get('/resumen-usuario', async (req, res) => {
         // Puntos provisionales: exacto = 3 pts, resultado correcto = 1 pt (se ajustará cuando el usuario defina el sistema)
         const puntos = exactos * 3 + parciales * 1;
 
-        // Posición en el ranking global (por puntos, luego por intentos realizados)
+        // Posición en el ranking global — $1 = puntos del usuario actual
         const { rows: posRows } = await pool.query(
             `SELECT COUNT(*)::int + 1 AS posicion
              FROM (
@@ -437,9 +437,9 @@ router.get('/resumen-usuario', async (req, res) => {
                          )
                          AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
                      )
-                 ) > $2
+                 ) > CAST($1 AS integer)
              ) liders`,
-            [usuario_id, puntos]
+            [puntos]
         );
 
         // Total de participantes con al menos 1 pronóstico
@@ -448,6 +448,7 @@ router.get('/resumen-usuario', async (req, res) => {
         );
 
         // Puntos mínimos del usuario inmediatamente arriba en el ranking
+        // Cast explícito para que PostgreSQL pueda inferir tipos en la subquery
         const { rows: sigRows } = await pool.query(
             `SELECT MIN(pts) AS puntos_siguiente
              FROM (
@@ -468,10 +469,10 @@ router.get('/resumen-usuario', async (req, res) => {
                      ) AS pts
                  FROM pronosticos pr2
                  JOIN partidos p2 ON p2.id = pr2.partido_id
-                 WHERE pr2.usuario_id != $1
+                 WHERE pr2.usuario_id != CAST($1 AS integer)
                  GROUP BY pr2.usuario_id
              ) ranking
-             WHERE pts > $2`,
+             WHERE pts > CAST($2 AS integer)`,
             [usuario_id, puntos]
         );
         const puntos_siguiente = sigRows[0]?.puntos_siguiente != null ? parseInt(sigRows[0].puntos_siguiente) : null;
