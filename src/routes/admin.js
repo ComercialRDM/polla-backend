@@ -8,6 +8,7 @@ const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
+const { enviarMensajeManyChat, formatearCelularWhatsApp } = require('../services/manychatService');
 
 const router = express.Router();
 
@@ -523,6 +524,32 @@ router.get('/codigo-reset/:celular', async (req, res) => {
         });
     } catch (err) {
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/test-whatsapp - envía mensaje de prueba y devuelve respuesta completa de ManyChat
+router.post('/test-whatsapp', async (req, res) => {
+    const { celular } = req.body;
+    if (!celular) return res.status(400).json({ success: false, error: 'Falta celular' });
+
+    const apiKey = process.env.MANYCHAT_API_KEY;
+    if (!apiKey) {
+        return res.json({ success: false, error: 'MANYCHAT_API_KEY no está configurada en las variables de entorno de Render.' });
+    }
+
+    try {
+        const resultado = await enviarMensajeManyChat({
+            celular,
+            mensaje: '🧪 Prueba de conexión — Polla Mundialista La Retoucherie. Si recibes esto, el sistema de WhatsApp funciona correctamente.',
+        });
+        return res.json({ success: true, subscriberId: resultado.subscriberId, celularFormateado: `+${formatearCelularWhatsApp(celular)}` });
+    } catch (err) {
+        return res.json({
+            success: false,
+            error: err.message,
+            detalles: err.response?.data || null,
+            celularFormateado: `+${formatearCelularWhatsApp(celular)}`,
+        });
     }
 });
 
