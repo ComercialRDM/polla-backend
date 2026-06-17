@@ -527,7 +527,7 @@ router.get('/codigo-reset/:celular', async (req, res) => {
     }
 });
 
-// POST /api/admin/test-whatsapp - envía mensaje de prueba y devuelve respuesta completa de ManyChat
+// POST /api/admin/test-whatsapp - diagnóstico paso a paso: createSubscriber → sendContent
 router.post('/test-whatsapp', async (req, res) => {
     const { celular } = req.body;
     if (!celular) return res.status(400).json({ success: false, error: 'Falta celular' });
@@ -537,20 +537,49 @@ router.post('/test-whatsapp', async (req, res) => {
         return res.json({ success: false, error: 'MANYCHAT_API_KEY no está configurada en las variables de entorno de Render.' });
     }
 
+    const axios = require('axios');
+    const BASE = process.env.MANYCHAT_API_URL || 'https://api.manychat.com';
+    const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+    const celularFormateado = `+${formatearCelularWhatsApp(celular)}`;
+
+    // Paso 1: createSubscriber
+    let paso1;
     try {
-        const resultado = await enviarMensajeManyChat({
-            celular,
-            mensaje: '🧪 Prueba de conexión — Polla Mundialista La Retoucherie. Si recibes esto, el sistema de WhatsApp funciona correctamente.',
-        });
-        return res.json({ success: true, subscriberId: resultado.subscriberId, celularFormateado: `+${formatearCelularWhatsApp(celular)}` });
+        const { data } = await axios.post(`${BASE}/fb/subscriber/createSubscriber`,
+            { whatsapp_phone: celularFormateado, consent_phrase: 'Acepto recibir mensajes de La Retoucherie' },
+            { headers, validateStatus: () => true }
+        );
+        paso1 = data;
     } catch (err) {
-        return res.json({
-            success: false,
-            error: err.message,
-            detalles: err.response?.data || null,
-            celularFormateado: `+${formatearCelularWhatsApp(celular)}`,
-        });
+        return res.json({ success: false, paso: 'createSubscriber', error: err.message, celularFormateado });
     }
+
+    const subscriberId = paso1?.data?.id || paso1?.details?.[0]?.extra?.id;
+
+    if (!subscriberId) {
+        return res.json({ success: false, paso: 'createSubscriber', celularFormateado, respuestaManyChat: paso1 });
+    }
+
+    // Paso 2: sendContent
+    let paso2;
+    try {
+        const { data } = await axios.post(`${BASE}/fb/sending/sendContent`, {
+            subscriber_id: subscriberId,
+            data: { version: 'v2', content: { type: 'whatsapp', messages: [{ type: 'text', text: '🧪 Prueba — Polla Mundialista La Retoucherie. Si recibes esto, WhatsApp funciona.' }] } },
+        }, { headers, validateStatus: () => true });
+        paso2 = data;
+    } catch (err) {
+        return res.json({ success: false, paso: 'sendContent', subscriberId, error: err.message, celularFormateado, respuestaCreate: paso1 });
+    }
+
+    return res.json({
+        success: paso2?.status === 'success',
+        paso: 'sendContent',
+        subscriberId,
+        celularFormateado,
+        respuestaCreate: paso1,
+        respuestaSend: paso2,
+    });
 });
 
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
