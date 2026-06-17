@@ -358,6 +358,112 @@ router.post('/votar', async (req, res) => {
     }
 });
 
+// GET /api/polla/resumen-usuario?usuario_id= - estadísticas personales del usuario
+router.get('/resumen-usuario', async (req, res) => {
+    const usuario_id = parseInt(req.query.usuario_id);
+    if (!usuario_id) return res.status(400).json({ success: false, error: 'Falta usuario_id' });
+
+    try {
+        // Intentos pagados (cupos de transacciones)
+        const saldo = await obtenerSaldoUsuario(usuario_id);
+
+        // Total de pronósticos realizados (incluyendo flash)
+        const { rows: totalRows } = await pool.query(
+            'SELECT COUNT(*)::int AS total FROM pronosticos WHERE usuario_id = $1',
+            [usuario_id]
+        );
+        const intentos_realizados = totalRows[0].total;
+
+        // Puntos: correctos (marcador exacto) y parciales (solo ganador)
+        const { rows: puntosRows } = await pool.query(
+            `SELECT
+                COUNT(*) FILTER (
+                    WHERE p.estado = 'cerrado'
+                    AND pr.goles_local = p.goles_local
+                    AND pr.goles_visitante = p.goles_visitante
+                )::int AS exactos,
+                COUNT(*) FILTER (
+                    WHERE p.estado = 'cerrado'
+                    AND (
+                        (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
+                        (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR
+                        (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
+                    )
+                    AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
+                )::int AS parciales
+             FROM pronosticos pr
+             JOIN partidos p ON p.id = pr.partido_id
+             WHERE pr.usuario_id = $1`,
+            [usuario_id]
+        );
+        const exactos = puntosRows[0].exactos;
+        const parciales = puntosRows[0].parciales;
+        // Puntos provisionales: exacto = 3 pts, resultado correcto = 1 pt (se ajustará cuando el usuario defina el sistema)
+        const puntos = exactos * 3 + parciales * 1;
+
+        // Posición en el ranking global (por puntos, luego por intentos realizados)
+        const { rows: posRows } = await pool.query(
+            `SELECT COUNT(*)::int + 1 AS posicion
+             FROM (
+                 SELECT pr2.usuario_id,
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND pr2.goles_local = p2.goles_local
+                         AND pr2.goles_visitante = p2.goles_visitante
+                     ) * 3 +
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND (
+                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                         )
+                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                     ) AS pts
+                 FROM pronosticos pr2
+                 JOIN partidos p2 ON p2.id = pr2.partido_id
+                 GROUP BY pr2.usuario_id
+                 HAVING (
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante
+                     ) * 3 +
+                     COUNT(*) FILTER (
+                         WHERE p2.estado = 'cerrado'
+                         AND (
+                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                         )
+                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                     )
+                 ) > $2
+             ) liders`,
+            [usuario_id, puntos]
+        );
+
+        // Total de participantes con al menos 1 pronóstico
+        const { rows: totalPart } = await pool.query(
+            'SELECT COUNT(DISTINCT usuario_id)::int AS total FROM pronosticos'
+        );
+
+        return res.json({
+            success: true,
+            intentos_realizados,
+            intentos_pagados: saldo.cuposTotales,
+            intentos_disponibles: saldo.cuposDisponibles,
+            puntos,
+            exactos,
+            parciales,
+            posicion: posRows[0].posicion,
+            total_participantes: totalPart[0].total,
+        });
+    } catch (err) {
+        console.error('Error en /polla/resumen-usuario:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // ── PROMOCIÓN RELÁMPAGO ──────────────────────────────────────────────────────
 // Partidos donde cualquier usuario registrado puede pronosticar sin bono,
 // con ventana de 60 minutos DESPUÉS del pitazo inicial.
