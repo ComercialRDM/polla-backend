@@ -811,4 +811,29 @@ router.patch('/local-usuarios/:id/toggle', async (req, res) => {
     }
 });
 
+// GET /api/admin/usuarios - lista todos los usuarios registrados con resumen de actividad
+router.get('/usuarios', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT
+                u.id,
+                u.nombre,
+                u.correo,
+                u.celular,
+                u.fecha_creacion,
+                COUNT(t.id) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE) AS compras_aprobadas,
+                COALESCE(SUM(t.valor_pagado) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE), 0) AS total_pagado,
+                MAX(t.fecha_creacion) FILTER (WHERE t.es_test = FALSE) AS ultima_transaccion
+             FROM usuarios u
+             LEFT JOIN transacciones t ON t.usuario_id = u.id
+             GROUP BY u.id
+             ORDER BY u.fecha_creacion DESC`
+        );
+        return res.json({ success: true, total: rows.length, usuarios: rows });
+    } catch (err) {
+        console.error('Error en GET /admin/usuarios:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;
