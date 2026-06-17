@@ -1,15 +1,17 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 const pool = require('../db');
 const localAuth = require('../middleware/localAuth');
 const { generarToken } = require('../utils/adminTokens');
 
 const router = express.Router();
 
-// POST /api/local/login - autenticación de cuentas de locales (redención de bonos)
+// POST /api/local/login - autenticación de cuentas de locales [+ TOTP si 2FA activo]
 router.post('/login', async (req, res) => {
-    const { usuario, password } = req.body;
+    const { usuario, password, totp_code } = req.body;
 
     if (!usuario || !password) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
@@ -17,7 +19,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            'SELECT id, usuario, nombre_local, password_hash FROM local_usuarios WHERE usuario = $1 AND activo = TRUE',
+            'SELECT id, usuario, nombre_local, password_hash, totp_secret, totp_enabled FROM local_usuarios WHERE usuario = $1 AND activo = TRUE',
             [usuario]
         );
 
@@ -28,6 +30,12 @@ router.post('/login', async (req, res) => {
         const valido = await bcrypt.compare(password, rows[0].password_hash);
         if (!valido) {
             return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos' });
+        }
+
+        if (rows[0].totp_enabled) {
+            if (!totp_code) return res.json({ success: false, requires_2fa: true });
+            const valido2fa = speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: totp_code, window: 1 });
+            if (!valido2fa) return res.status(401).json({ success: false, error: 'Código de verificación incorrecto' });
         }
 
         const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, role: 'LOCAL' });
@@ -72,6 +80,69 @@ router.post('/reset-password', async (req, res) => {
 });
 
 router.use(localAuth);
+
+// POST /api/local/2fa/setup
+router.post('/2fa/setup', async (req, res) => {
+    const localId = req.local.id;
+    try {
+        const { rows } = await pool.query('SELECT usuario, totp_enabled FROM local_usuarios WHERE id = $1', [localId]);
+        if (rows[0].totp_enabled) return res.status(409).json({ success: false, error: '2FA ya está activo.' });
+        const secretObj = speakeasy.generateSecret({ length: 20, name: `AdminQR:${rows[0].usuario}`, issuer: 'Polla La Retoucherie' });
+        const qrDataUrl = await QRCode.toDataURL(secretObj.otpauth_url);
+        await pool.query('UPDATE local_usuarios SET totp_secret = $1 WHERE id = $2', [secretObj.base32, localId]);
+        return res.json({ success: true, qrDataUrl });
+    } catch (err) {
+        console.error('Error en /local/2fa/setup:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/local/2fa/confirmar
+router.post('/2fa/confirmar', async (req, res) => {
+    const { code } = req.body;
+    const localId = req.local.id;
+    if (!code) return res.status(400).json({ success: false, error: 'Falta code' });
+    try {
+        const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM local_usuarios WHERE id = $1', [localId]);
+        if (!rows[0].totp_secret) return res.status(400).json({ success: false, error: 'Primero ejecuta setup' });
+        if (rows[0].totp_enabled) return res.status(409).json({ success: false, error: '2FA ya está activo' });
+        if (!speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 })) {
+            return res.status(401).json({ success: false, error: 'Código incorrecto. Verifica la hora del dispositivo.' });
+        }
+        await pool.query('UPDATE local_usuarios SET totp_enabled = TRUE WHERE id = $1', [localId]);
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/local/2fa/desactivar
+router.post('/2fa/desactivar', async (req, res) => {
+    const { code } = req.body;
+    const localId = req.local.id;
+    if (!code) return res.status(400).json({ success: false, error: 'Falta code' });
+    try {
+        const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM local_usuarios WHERE id = $1', [localId]);
+        if (!rows[0].totp_enabled) return res.status(400).json({ success: false, error: '2FA no está activo' });
+        if (!speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 })) {
+            return res.status(401).json({ success: false, error: 'Código incorrecto' });
+        }
+        await pool.query('UPDATE local_usuarios SET totp_secret = NULL, totp_enabled = FALSE WHERE id = $1', [localId]);
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/local/2fa/estado
+router.get('/2fa/estado', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT totp_enabled FROM local_usuarios WHERE id = $1', [req.local.id]);
+        return res.json({ success: true, totp_enabled: rows[0]?.totp_enabled ?? false });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
 
 // GET /api/local/bono/:token - datos del bono para verificar y redimir
 router.get('/bono/:token', async (req, res) => {
