@@ -554,15 +554,32 @@ router.post('/test-whatsapp', async (req, res) => {
         return res.json({ success: false, paso: 'createSubscriber', error: err.message, celularFormateado });
     }
 
-    const subscriberId = paso1?.data?.id || paso1?.details?.[0]?.extra?.id;
+    let subscriberId = paso1?.data?.id;
+
+    // Paso 1b: si createSubscriber falló (suscriptor ya existe), buscarlo por WhatsApp phone
+    let paso1b = null;
+    if (!subscriberId && paso1?.status === 'error') {
+        const waId = formatearCelularWhatsApp(celular); // sin '+'
+        try {
+            const { data } = await axios.get(
+                `${BASE}/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}`,
+                { headers, validateStatus: () => true }
+            );
+            paso1b = data;
+            subscriberId = data?.data?.id || null;
+        } catch (err) {
+            paso1b = { error: err.message };
+        }
+    }
 
     if (!subscriberId) {
         return res.json({
             success: false,
-            paso: 'createSubscriber — subscriber ID no encontrado en respuesta',
+            paso: 'createSubscriber + findBySystemField — subscriber ID no encontrado',
             celularFormateado,
-            error: `ManyChat no devolvió subscriber_id. Revisa 'detalles' para ver la respuesta cruda.`,
+            error: `ManyChat no devolvió subscriber_id en ninguno de los dos intentos.`,
             detalles: paso1,
+            detalles_busqueda: paso1b,
         });
     }
 
