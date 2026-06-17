@@ -3,36 +3,21 @@ const path = require('path');
 const sharp = require('sharp');
 const QRCode = require('qrcode');
 
-const TEMPLATE_PATH = path.join(__dirname, '..', '..', 'assets', 'bono_template.jpg');
+const TEMPLATE_PATH = path.join(__dirname, '..', '..', 'assets', 'Bono_template.png');
 
-// Tamaño del template (placeholder generado si no existe el archivo)
-const ANCHO = 1748;
-const ALTO = 1240;
+// Tamaño real de la plantilla (1191×896 px)
+const ANCHO = 1191;
+const ALTO  = 896;
 
-// --- Coordenadas fácilmente calibrables del overlay ---
-// Calibradas para la plantilla "Bono Digital" (placeholders "$(VALOR)" y "(nombre)")
+// --- Coordenadas calibradas para la plantilla "Bono Digital" negra/amarilla ---
+// Valor numérico: va dentro del espacio $( ) de la plantilla
 const COORD = {
-    valor: { x: 890, y: 704, fontSize: 140, color: '#1a1a1a' },
-    nombre: { x: 900, y: 1076, fontSize: 45, color: '#1a1a1a' },
+    valor:  { x: 440, y: 453, fontSize: 85, color: '#ffffff' },
+    nombre: { x: 440, y: 815, fontSize: 40, color: '#1a1a1a' },
 };
 
-// Rectángulos para tapar el texto placeholder de la plantilla antes de escribir el valor real
-const COVER = {
-    valor: { x: 480, y: 545, w: 820, h: 220, color: '#F3EAE1' },
-    nombre: { x: 700, y: 1035, w: 400, h: 50, color: '#FEE580' },
-    vigencia: { x: 350, y: 1108, w: 1060, h: 125, color: '#F4EBE2' },
-    sedes: { x: 330, y: 838, w: 945, h: 152, color: '#FEE580' },
-};
-
-// Texto de vigencia y sedes (tapa y reemplaza el texto fijo de la plantilla)
-const VIGENCIA_TEXTO_1 = '*Válido hasta el 1 de marzo de 2027 - 6:00 p.m.';
-const VIGENCIA_TEXTO_2 = 'Sedes en Barranquilla y Cartagena';
-const SEDES_TEXTO_1 = 'Preséntalo en cualquiera de nuestras';
-const SEDES_TEXTO_2 = 'sedes en Barranquilla o Cartagena';
-
-// Código QR (token de acceso del bono) en la esquina inferior derecha, para que
-// el local lo escanee y marque el bono como consumido
-const QR = { x: ANCHO - 240, y: ALTO - 240, size: 200, padding: 10 };
+// Código QR: va dentro de la caja blanca esquina superior derecha (debajo del logo)
+const QR = { x: 818, y: 215, size: 250, padding: 10 };
 
 /**
  * Genera (si no existe) un template placeholder para el bono.
@@ -68,16 +53,8 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
 
     const overlaySvg = `
     <svg width="${ANCHO}" height="${ALTO}" xmlns="http://www.w3.org/2000/svg">
-        <rect x="${COVER.valor.x}" y="${COVER.valor.y}" width="${COVER.valor.w}" height="${COVER.valor.h}" fill="${COVER.valor.color}"/>
-        <rect x="${COVER.nombre.x}" y="${COVER.nombre.y}" width="${COVER.nombre.w}" height="${COVER.nombre.h}" fill="${COVER.nombre.color}"/>
-        <rect x="${COVER.vigencia.x}" y="${COVER.vigencia.y}" width="${COVER.vigencia.w}" height="${COVER.vigencia.h}" fill="${COVER.vigencia.color}"/>
-        <rect x="${COVER.sedes.x}" y="${COVER.sedes.y}" width="${COVER.sedes.w}" height="${COVER.sedes.h}" fill="${COVER.sedes.color}"/>
         <text x="${COORD.valor.x}" y="${COORD.valor.y}" font-family="Georgia, 'Times New Roman', serif" font-size="${COORD.valor.fontSize}" font-weight="bold" fill="${COORD.valor.color}" text-anchor="middle">${valorFormateado}</text>
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="middle">${escapeXml(nombre)}</text>
-        <text x="${ANCHO / 2}" y="885" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(SEDES_TEXTO_1)}</text>
-        <text x="${ANCHO / 2}" y="940" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(SEDES_TEXTO_2)}</text>
-        <text x="${ANCHO / 2}" y="1150" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_1)}</text>
-        <text x="${ANCHO / 2}" y="1200" font-family="Arial" font-size="38" fill="#1a1a1a" text-anchor="middle">${escapeXml(VIGENCIA_TEXTO_2)}</text>
         ${esTest ? `
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
             <rect x="${ANCHO / 2 - 520}" y="${ALTO / 2 - 70}" width="1040" height="140" fill="#dc2626" opacity="0.85"/>
