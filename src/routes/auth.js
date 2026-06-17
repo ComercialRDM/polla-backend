@@ -35,13 +35,16 @@ router.post('/registro', async (req, res) => {
 
     const celularNormalizado = normalizarCelular(celular);
     const nombreLimpio = String(nombre || '').trim();
-    const correoLimpio = String(correo || '').trim().toLowerCase() || null;
+    const correoLimpio = String(correo || '').trim().toLowerCase();
 
     if (!celularNormalizado || celularNormalizado.length < 7) {
         return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
     }
     if (!nombreLimpio) {
         return res.status(400).json({ success: false, error: 'Ingresa tu nombre completo' });
+    }
+    if (!correoLimpio || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoLimpio)) {
+        return res.status(400).json({ success: false, error: 'Ingresa un correo electrónico válido' });
     }
     if (!password || password.length < 8) {
         return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 8 caracteres' });
