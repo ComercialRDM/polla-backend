@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { authenticator } = require('otplib');
+const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
@@ -43,7 +43,7 @@ router.post('/login', async (req, res) => {
             if (!totp_code) {
                 return res.status(200).json({ success: false, requires_2fa: true });
             }
-            const valido2fa = authenticator.check(totp_code, rows[0].totp_secret);
+            const valido2fa = speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: totp_code, window: 1 });
             if (!valido2fa) {
                 return res.status(401).json({ success: false, error: 'Código de verificación incorrecto' });
             }
@@ -67,15 +67,14 @@ router.post('/2fa/setup', async (req, res) => {
         if (rows[0].totp_enabled) {
             return res.status(409).json({ success: false, error: '2FA ya está activo. Desactívalo primero.' });
         }
-        const secret = authenticator.generateSecret();
-        const otpauthUrl = authenticator.keyuri(rows[0].usuario, 'Admin Polla La Retoucherie', secret);
-        const qrDataUrl = await QRCode.toDataURL(otpauthUrl);
-        // Guardar secret pendiente (totp_enabled sigue en FALSE hasta confirmar)
-        await pool.query('UPDATE admin_usuarios SET totp_secret = $1 WHERE id = $2', [secret, adminId]);
+        const secretObj = speakeasy.generateSecret({ length: 20, name: `Admin:${rows[0].usuario}`, issuer: 'Polla La Retoucherie' });
+        const qrDataUrl = await QRCode.toDataURL(secretObj.otpauth_url);
+        // Guardar secret base32 pendiente (totp_enabled sigue en FALSE hasta confirmar)
+        await pool.query('UPDATE admin_usuarios SET totp_secret = $1 WHERE id = $2', [secretObj.base32, adminId]);
         return res.json({ success: true, qrDataUrl, secret });
     } catch (err) {
         console.error('Error en /admin/2fa/setup:', err);
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 
@@ -88,7 +87,7 @@ router.post('/2fa/confirmar', async (req, res) => {
         const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
         if (!rows[0].totp_secret) return res.status(400).json({ success: false, error: 'Primero ejecuta /2fa/setup' });
         if (rows[0].totp_enabled) return res.status(409).json({ success: false, error: '2FA ya está activo' });
-        if (!authenticator.check(code, rows[0].totp_secret)) {
+        if (!speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 })) {
             return res.status(401).json({ success: false, error: 'Código incorrecto. Verifica que la hora del dispositivo sea correcta.' });
         }
         await pool.query('UPDATE admin_usuarios SET totp_enabled = TRUE WHERE id = $1', [adminId]);
@@ -107,7 +106,7 @@ router.post('/2fa/desactivar', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
         if (!rows[0].totp_enabled) return res.status(400).json({ success: false, error: '2FA no está activo' });
-        if (!authenticator.check(code, rows[0].totp_secret)) {
+        if (!speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 })) {
             return res.status(401).json({ success: false, error: 'Código incorrecto' });
         }
         await pool.query('UPDATE admin_usuarios SET totp_secret = NULL, totp_enabled = FALSE WHERE id = $1', [adminId]);
@@ -428,7 +427,7 @@ router.post('/test/crear-prueba', async (req, res) => {
         return res.json({ success: true, ...resultado });
     } catch (err) {
         console.error('Error en /admin/test/crear-prueba:', err);
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 
