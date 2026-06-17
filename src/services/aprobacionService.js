@@ -31,11 +31,12 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         let transaccion = rows[0];
 
         // Recompensa por referido: si esta compra vino de un link de referido, ambos ganan 1 intento extra
+        // Además el referidor gana 5 puntos bonus en el ranking de la polla
         if (transaccion.referido_por_token && !transaccion.referido_bono_otorgado) {
             const { rows: referidorRows } = await client.query(
                 `UPDATE transacciones SET intentos_totales = intentos_totales + 1
                  WHERE token_acceso = $1 AND estado_pago = 'APROBADO'
-                 RETURNING id`,
+                 RETURNING id, usuario_id`,
                 [transaccion.referido_por_token]
             );
 
@@ -47,6 +48,12 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
                     [transaccion.id]
                 );
                 transaccion = actualizada[0];
+
+                // 5 puntos bonus al referidor en el ranking de la polla
+                await client.query(
+                    'UPDATE usuarios SET puntos_bonus = puntos_bonus + 5 WHERE id = $1',
+                    [referidorRows[0].usuario_id]
+                );
             }
         }
 

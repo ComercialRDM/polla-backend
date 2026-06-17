@@ -278,6 +278,21 @@ app.listen(PORT, async () => {
         console.error('Error creando tabla redenciones:', err.message);
     }
 
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS compartidas (
+                id          SERIAL PRIMARY KEY,
+                usuario_id  INTEGER NOT NULL REFERENCES usuarios(id),
+                partido_id  INTEGER REFERENCES partidos(id),
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(usuario_id, partido_id)
+            )
+        `);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS puntos_bonus INTEGER NOT NULL DEFAULT 0`);
+    } catch (err) {
+        console.error('Error aplicando migración de compartidas/puntos_bonus:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

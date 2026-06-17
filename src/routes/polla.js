@@ -358,6 +358,56 @@ router.post('/votar', async (req, res) => {
     }
 });
 
+// POST /api/polla/registrar-compartida
+// Registra que el usuario compartió su pronóstico de un partido (máx 1 vez por partido).
+// Si es la primera vez, otorga 1 punto bonus al usuario.
+router.post('/registrar-compartida', async (req, res) => {
+    const { token_acceso, partido_id } = req.body;
+    if (!token_acceso || !partido_id) {
+        return res.status(400).json({ success: false, error: 'Faltan campos' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows: tokenRows } = await client.query(
+            `SELECT usuario_id FROM transacciones WHERE token_acceso = $1 AND estado_pago = 'APROBADO' LIMIT 1`,
+            [token_acceso]
+        );
+        if (tokenRows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Token inválido' });
+        }
+        const { usuario_id } = tokenRows[0];
+
+        const { rowCount } = await client.query(
+            `INSERT INTO compartidas (usuario_id, partido_id)
+             VALUES ($1, CAST($2 AS integer))
+             ON CONFLICT (usuario_id, partido_id) DO NOTHING`,
+            [usuario_id, partido_id]
+        );
+
+        let puntos_ganados = 0;
+        if (rowCount > 0) {
+            await client.query(
+                'UPDATE usuarios SET puntos_bonus = puntos_bonus + 1 WHERE id = $1',
+                [usuario_id]
+            );
+            puntos_ganados = 1;
+        }
+
+        await client.query('COMMIT');
+        return res.json({ success: true, puntos_ganados });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en registrar-compartida:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
 // GET /api/polla/resumen-usuario?usuario_id= - estadísticas personales del usuario
 router.get('/resumen-usuario', async (req, res) => {
     const usuario_id = parseInt(req.query.usuario_id);
@@ -398,46 +448,42 @@ router.get('/resumen-usuario', async (req, res) => {
         );
         const exactos = puntosRows[0].exactos;
         const parciales = puntosRows[0].parciales;
-        // Puntos provisionales: exacto = 3 pts, resultado correcto = 1 pt (se ajustará cuando el usuario defina el sistema)
-        const puntos = exactos * 3 + parciales * 1;
+        const puntos_pronosticos = exactos * 3 + parciales * 1;
 
-        // Posición en el ranking global — $1 = puntos del usuario actual
+        // Puntos bonus (compartidas + referidos)
+        const { rows: bonusRows } = await pool.query(
+            'SELECT puntos_bonus FROM usuarios WHERE id = $1',
+            [usuario_id]
+        );
+        const puntos_bonus = bonusRows[0]?.puntos_bonus || 0;
+        const puntos = puntos_pronosticos + puntos_bonus;
+
+        // Posición en el ranking global — $1 = puntos totales (pronósticos + bonus) del usuario actual
         const { rows: posRows } = await pool.query(
             `SELECT COUNT(*)::int + 1 AS posicion
              FROM (
-                 SELECT pr2.usuario_id,
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND pr2.goles_local = p2.goles_local
-                         AND pr2.goles_visitante = p2.goles_visitante
-                     ) * 3 +
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND (
-                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                         )
-                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                     ) AS pts
-                 FROM pronosticos pr2
-                 JOIN partidos p2 ON p2.id = pr2.partido_id
-                 GROUP BY pr2.usuario_id
-                 HAVING (
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante
-                     ) * 3 +
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND (
-                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                         )
-                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                     )
-                 ) > CAST($1 AS integer)
+                 SELECT pts FROM (
+                     SELECT pr2.usuario_id,
+                         COUNT(*) FILTER (
+                             WHERE p2.estado = 'cerrado'
+                             AND pr2.goles_local = p2.goles_local
+                             AND pr2.goles_visitante = p2.goles_visitante
+                         ) * 3 +
+                         COUNT(*) FILTER (
+                             WHERE p2.estado = 'cerrado'
+                             AND (
+                                 (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                                 (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                                 (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                             )
+                             AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                         ) + COALESCE(u2.puntos_bonus, 0) AS pts
+                     FROM pronosticos pr2
+                     JOIN partidos p2 ON p2.id = pr2.partido_id
+                     JOIN usuarios u2 ON u2.id = pr2.usuario_id
+                     GROUP BY pr2.usuario_id, u2.puntos_bonus
+                 ) inner_pts
+                 WHERE pts > CAST($1 AS integer)
              ) liders`,
             [puntos]
         );
@@ -447,32 +493,34 @@ router.get('/resumen-usuario', async (req, res) => {
             'SELECT COUNT(DISTINCT usuario_id)::int AS total FROM pronosticos'
         );
 
-        // Puntos mínimos del usuario inmediatamente arriba en el ranking
-        // Cast explícito para que PostgreSQL pueda inferir tipos en la subquery
+        // Puntos mínimos del usuario inmediatamente arriba en el ranking (incluye bonus)
         const { rows: sigRows } = await pool.query(
             `SELECT MIN(pts) AS puntos_siguiente
              FROM (
-                 SELECT pr2.usuario_id,
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND pr2.goles_local = p2.goles_local
-                         AND pr2.goles_visitante = p2.goles_visitante
-                     ) * 3 +
-                     COUNT(*) FILTER (
-                         WHERE p2.estado = 'cerrado'
-                         AND (
-                             (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                             (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                             (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                         )
-                         AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                     ) AS pts
-                 FROM pronosticos pr2
-                 JOIN partidos p2 ON p2.id = pr2.partido_id
-                 WHERE pr2.usuario_id != CAST($1 AS integer)
-                 GROUP BY pr2.usuario_id
-             ) ranking
-             WHERE pts > CAST($2 AS integer)`,
+                 SELECT pts FROM (
+                     SELECT pr2.usuario_id,
+                         COUNT(*) FILTER (
+                             WHERE p2.estado = 'cerrado'
+                             AND pr2.goles_local = p2.goles_local
+                             AND pr2.goles_visitante = p2.goles_visitante
+                         ) * 3 +
+                         COUNT(*) FILTER (
+                             WHERE p2.estado = 'cerrado'
+                             AND (
+                                 (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
+                                 (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
+                                 (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
+                             )
+                             AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
+                         ) + COALESCE(u2.puntos_bonus, 0) AS pts
+                     FROM pronosticos pr2
+                     JOIN partidos p2 ON p2.id = pr2.partido_id
+                     JOIN usuarios u2 ON u2.id = pr2.usuario_id
+                     WHERE pr2.usuario_id != CAST($1 AS integer)
+                     GROUP BY pr2.usuario_id, u2.puntos_bonus
+                 ) inner_pts
+                 WHERE pts > CAST($2 AS integer)
+             ) ranking`,
             [usuario_id, puntos]
         );
         const puntos_siguiente = sigRows[0]?.puntos_siguiente != null ? parseInt(sigRows[0].puntos_siguiente) : null;
