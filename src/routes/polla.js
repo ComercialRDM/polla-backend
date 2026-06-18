@@ -56,6 +56,35 @@ router.get('/bono/:token', async (req, res) => {
     }
 });
 
+// GET /api/polla/datos-registro/:token - datos de la compra aprobada para
+// pre-llenar y bloquear correo/celular en el formulario de registro (Flujo
+// "primero compra, luego registro"). Así el registro queda atado a la misma
+// cuenta de la compra, sin que el comprador pueda teclear datos distintos.
+router.get('/datos-registro/:token', async (req, res) => {
+    const { token } = req.params;
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT u.nombre, u.correo, u.celular, (u.password_hash IS NOT NULL) AS ya_registrado
+             FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
+             LIMIT 1`,
+            [token]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ encontrado: false });
+        }
+
+        const { nombre, correo, celular, ya_registrado } = rows[0];
+        return res.json({ encontrado: true, nombre, correo, celular, ya_registrado });
+    } catch (err) {
+        console.error('Error en /polla/datos-registro/:token:', err);
+        return res.status(500).json({ encontrado: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/polla/calendario/:calendario_token.ics - feed de calendario (.ics) con
 // los partidos de los equipos favoritos del usuario, pública para poder suscribirse
 // desde Apple/Google/Outlook Calendar.

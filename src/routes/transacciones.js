@@ -14,6 +14,37 @@ function tokenReferidoValido(ref) {
 
 const MIME_TYPES_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
+// Resuelve el usuario de una compra sin fusionar por error a dos personas distintas.
+// `celular` es la clave de identidad confiable (UNIQUE NOT NULL en el esquema), así que
+// se busca primero por celular. Si no existe y el correo ya pertenece a OTRA cuenta con
+// distinto celular, se crea el usuario nuevo sin correo en vez de adjudicar la compra a
+// la cuenta ajena (antes el `WHERE correo = $1 OR celular = $2` podía mezclar ambas).
+async function resolverUsuarioComprador(client, { nombre, correo, celular }) {
+    const { rows: porCelular } = await client.query(
+        'SELECT * FROM usuarios WHERE celular = $1',
+        [celular]
+    );
+    if (porCelular.length > 0) return porCelular[0];
+
+    try {
+        const { rows } = await client.query(
+            'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
+            [nombre, correo, celular]
+        );
+        return rows[0];
+    } catch (err) {
+        if (err.code === '23505') {
+            console.warn(`resolverUsuarioComprador: correo "${correo}" ya registrado con otro celular, se crea cuenta nueva sin correo para celular ${celular}`);
+            const { rows } = await client.query(
+                'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, NULL, $2) RETURNING *',
+                [nombre, celular]
+            );
+            return rows[0];
+        }
+        throw err;
+    }
+}
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -54,22 +85,8 @@ router.post('/crear-link', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Este partido ya no recibe nuevas compras' });
         }
 
-        // Crear o recuperar usuario (por correo o celular)
-        let usuario;
-        const { rows: existentes } = await client.query(
-            'SELECT * FROM usuarios WHERE correo = $1 OR celular = $2',
-            [correo, celular]
-        );
-
-        if (existentes.length > 0) {
-            usuario = existentes[0];
-        } else {
-            const { rows: nuevoUsuario } = await client.query(
-                'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
-                [nombre, correo, celular]
-            );
-            usuario = nuevoUsuario[0];
-        }
+        // Crear o recuperar usuario (por celular, la clave de identidad confiable)
+        const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
 
         // Insertar transacción PENDIENTE
         const { rows: transaccionRows } = await client.query(
@@ -150,22 +167,8 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
             return res.status(400).json({ success: false, error: 'Este partido ya no recibe nuevas compras' });
         }
 
-        // Crear o recuperar usuario (por correo o celular)
-        let usuario;
-        const { rows: existentes } = await client.query(
-            'SELECT * FROM usuarios WHERE correo = $1 OR celular = $2',
-            [correo, celular]
-        );
-
-        if (existentes.length > 0) {
-            usuario = existentes[0];
-        } else {
-            const { rows: nuevoUsuario } = await client.query(
-                'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
-                [nombre, correo, celular]
-            );
-            usuario = nuevoUsuario[0];
-        }
+        // Crear o recuperar usuario (por celular, la clave de identidad confiable)
+        const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
 
         // Insertar transacción PENDIENTE con el comprobante adjunto
         const { rows: transaccionRows } = await client.query(
