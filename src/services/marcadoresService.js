@@ -98,6 +98,10 @@ function iniciarMonitorMarcadores() {
                 console.warn(`actualizarMarcadores: error de red transitorio (${err.code}), reintentará en ${INTERVALO_MS / 1000}s`);
                 return;
             }
+            if (err.response?.status >= 500) {
+                console.warn(`actualizarMarcadores: error transitorio HTTP ${err.response.status} de football-data.org, reintentará en ${INTERVALO_MS / 1000}s`);
+                return;
+            }
             console.error('Error en actualizarMarcadores:', err.response?.status ?? err.code, err.message);
         });
     }, INTERVALO_MS);
