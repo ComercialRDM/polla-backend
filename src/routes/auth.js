@@ -171,7 +171,7 @@ router.post('/telefono/solicitar-codigo', async (req, res) => {
 
         return res.json({ success: true });
     } catch (err) {
-        console.error('Error en /auth/telefono/solicitar-codigo:', err.message);
+        console.error('Error en /auth/telefono/solicitar-codigo:', JSON.stringify(err.response?.data) || err.message);
         return res.status(500).json({ success: false, error: 'No se pudo enviar el código por WhatsApp. Intenta de nuevo.' });
     }
 });
