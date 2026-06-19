@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
-const { enviarCodigoWhatsApp } = require('../services/whatsappCloudService');
+const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
 const { enviarCorreoResetPassword } = require('../services/emailService');
 
 const router = express.Router();
@@ -12,8 +12,7 @@ const router = express.Router();
 const RESET_CODE_VIGENCIA_MIN = 10;
 const RESET_INTENTOS_MAX = 5;
 
-const TELEFONO_CODE_VIGENCIA_MIN = 10;
-const TELEFONO_INTENTOS_MAX = 5;
+const TELEFONO_REGISTRO_TOKEN_VIGENCIA_MIN = 10;
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -148,8 +147,8 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// POST /api/auth/telefono/solicitar-codigo - genera un código de un solo uso y lo
-// envía por WhatsApp para "Continuar con teléfono" (login/registro sin contraseña)
+// POST /api/auth/telefono/solicitar-codigo - manda el código de verificación por SMS
+// vía Twilio Verify, para "Continuar con teléfono" (login/registro sin contraseña)
 router.post('/telefono/solicitar-codigo', async (req, res) => {
     const celularNormalizado = normalizarCelular(req.body.celular);
 
@@ -158,27 +157,17 @@ router.post('/telefono/solicitar-codigo', async (req, res) => {
     }
 
     try {
-        const codigo = generarCodigoOTP();
-        await pool.query(
-            `INSERT INTO codigos_telefono (celular, codigo, expira, intentos, registro_token)
-             VALUES ($1, $2, now() + interval '${TELEFONO_CODE_VIGENCIA_MIN} minutes', 0, NULL)
-             ON CONFLICT (celular) DO UPDATE SET
-                codigo = EXCLUDED.codigo, expira = EXCLUDED.expira, intentos = 0, registro_token = NULL`,
-            [celularNormalizado, codigo]
-        );
-
-        await enviarCodigoWhatsApp({ celular: celularNormalizado, codigo });
-
+        await enviarCodigoTwilio(celularNormalizado);
         return res.json({ success: true });
     } catch (err) {
-        console.error('Error en /auth/telefono/solicitar-codigo:', JSON.stringify(err.response?.data) || err.message);
-        return res.status(500).json({ success: false, error: 'No se pudo enviar el código por WhatsApp. Intenta de nuevo.' });
+        console.error('Error en /auth/telefono/solicitar-codigo:', err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo enviar el código por SMS. Intenta de nuevo.' });
     }
 });
 
-// POST /api/auth/telefono/verificar-codigo - valida el código; si ya existe cuenta con
-// ese celular, inicia sesión directamente; si no, devuelve un registro_token de un solo
-// uso para crear la cuenta en /telefono/completar.
+// POST /api/auth/telefono/verificar-codigo - valida el código contra Twilio Verify; si
+// ya existe cuenta con ese celular, inicia sesión directamente; si no, genera un
+// registro_token de un solo uso para crear la cuenta en /telefono/completar.
 router.post('/telefono/verificar-codigo', async (req, res) => {
     const celularNormalizado = normalizarCelular(req.body.celular);
     const { codigo } = req.body;
@@ -187,55 +176,33 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
-        const { rows } = await client.query(
-            'SELECT * FROM codigos_telefono WHERE celular = $1 FOR UPDATE',
-            [celularNormalizado]
-        );
-
-        if (rows.length === 0 || new Date(rows[0].expira) < new Date()) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ success: false, error: 'El código venció o no existe. Solicita uno nuevo.' });
+        const valido = await verificarCodigoTwilio(celularNormalizado, codigo);
+        if (!valido) {
+            return res.status(400).json({ success: false, error: 'Código incorrecto o vencido.' });
         }
 
-        const registro = rows[0];
-
-        if (registro.intentos >= TELEFONO_INTENTOS_MAX) {
-            await client.query('DELETE FROM codigos_telefono WHERE celular = $1', [celularNormalizado]);
-            await client.query('COMMIT');
-            return res.status(429).json({ success: false, error: 'Demasiados intentos. Solicita un nuevo código.' });
-        }
-
-        if (registro.codigo !== String(codigo).trim()) {
-            await client.query('UPDATE codigos_telefono SET intentos = intentos + 1 WHERE celular = $1', [celularNormalizado]);
-            await client.query('COMMIT');
-            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
-        }
-
-        const { rows: usuarioRows } = await client.query(
+        const { rows: usuarioRows } = await pool.query(
             'SELECT id, nombre, celular, equipos_favoritos, calendario_token FROM usuarios WHERE celular = $1',
             [celularNormalizado]
         );
 
         if (usuarioRows.length > 0) {
-            await client.query('DELETE FROM codigos_telefono WHERE celular = $1', [celularNormalizado]);
-            await client.query('COMMIT');
             return res.json({ success: true, usuario: usuarioRows[0] });
         }
 
         const registroToken = crypto.randomUUID();
-        await client.query('UPDATE codigos_telefono SET registro_token = $1 WHERE celular = $2', [registroToken, celularNormalizado]);
-        await client.query('COMMIT');
+        await pool.query(
+            `INSERT INTO codigos_telefono (celular, codigo, expira, intentos, registro_token)
+             VALUES ($1, '', now() + interval '${TELEFONO_REGISTRO_TOKEN_VIGENCIA_MIN} minutes', 0, $2)
+             ON CONFLICT (celular) DO UPDATE SET
+                expira = EXCLUDED.expira, registro_token = EXCLUDED.registro_token`,
+            [celularNormalizado, registroToken]
+        );
         return res.json({ success: true, nuevo: true, registro_token: registroToken });
     } catch (err) {
-        await client.query('ROLLBACK');
         console.error('Error en /auth/telefono/verificar-codigo:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno' });
-    } finally {
-        client.release();
     }
 });
 
