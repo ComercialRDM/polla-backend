@@ -4,12 +4,16 @@ const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
+const { enviarCodigoWhatsApp } = require('../services/whatsappCloudService');
 const { enviarCorreoResetPassword } = require('../services/emailService');
 
 const router = express.Router();
 
 const RESET_CODE_VIGENCIA_MIN = 10;
 const RESET_INTENTOS_MAX = 5;
+
+const TELEFONO_CODE_VIGENCIA_MIN = 10;
+const TELEFONO_INTENTOS_MAX = 5;
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -141,6 +145,149 @@ router.post('/login', async (req, res) => {
     } catch (err) {
         console.error('Error en /auth/login:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/auth/telefono/solicitar-codigo - genera un código de un solo uso y lo
+// envía por WhatsApp para "Continuar con teléfono" (login/registro sin contraseña)
+router.post('/telefono/solicitar-codigo', async (req, res) => {
+    const celularNormalizado = normalizarCelular(req.body.celular);
+
+    if (!celularNormalizado || celularNormalizado.length < 7) {
+        return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
+    }
+
+    try {
+        const codigo = generarCodigoOTP();
+        await pool.query(
+            `INSERT INTO codigos_telefono (celular, codigo, expira, intentos, registro_token)
+             VALUES ($1, $2, now() + interval '${TELEFONO_CODE_VIGENCIA_MIN} minutes', 0, NULL)
+             ON CONFLICT (celular) DO UPDATE SET
+                codigo = EXCLUDED.codigo, expira = EXCLUDED.expira, intentos = 0, registro_token = NULL`,
+            [celularNormalizado, codigo]
+        );
+
+        await enviarCodigoWhatsApp({ celular: celularNormalizado, codigo });
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /auth/telefono/solicitar-codigo:', err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo enviar el código por WhatsApp. Intenta de nuevo.' });
+    }
+});
+
+// POST /api/auth/telefono/verificar-codigo - valida el código; si ya existe cuenta con
+// ese celular, inicia sesión directamente; si no, devuelve un registro_token de un solo
+// uso para crear la cuenta en /telefono/completar.
+router.post('/telefono/verificar-codigo', async (req, res) => {
+    const celularNormalizado = normalizarCelular(req.body.celular);
+    const { codigo } = req.body;
+
+    if (!celularNormalizado || !codigo) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+            'SELECT * FROM codigos_telefono WHERE celular = $1 FOR UPDATE',
+            [celularNormalizado]
+        );
+
+        if (rows.length === 0 || new Date(rows[0].expira) < new Date()) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'El código venció o no existe. Solicita uno nuevo.' });
+        }
+
+        const registro = rows[0];
+
+        if (registro.intentos >= TELEFONO_INTENTOS_MAX) {
+            await client.query('DELETE FROM codigos_telefono WHERE celular = $1', [celularNormalizado]);
+            await client.query('COMMIT');
+            return res.status(429).json({ success: false, error: 'Demasiados intentos. Solicita un nuevo código.' });
+        }
+
+        if (registro.codigo !== String(codigo).trim()) {
+            await client.query('UPDATE codigos_telefono SET intentos = intentos + 1 WHERE celular = $1', [celularNormalizado]);
+            await client.query('COMMIT');
+            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
+        }
+
+        const { rows: usuarioRows } = await client.query(
+            'SELECT id, nombre, celular, equipos_favoritos, calendario_token FROM usuarios WHERE celular = $1',
+            [celularNormalizado]
+        );
+
+        if (usuarioRows.length > 0) {
+            await client.query('DELETE FROM codigos_telefono WHERE celular = $1', [celularNormalizado]);
+            await client.query('COMMIT');
+            return res.json({ success: true, usuario: usuarioRows[0] });
+        }
+
+        const registroToken = crypto.randomUUID();
+        await client.query('UPDATE codigos_telefono SET registro_token = $1 WHERE celular = $2', [registroToken, celularNormalizado]);
+        await client.query('COMMIT');
+        return res.json({ success: true, nuevo: true, registro_token: registroToken });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en /auth/telefono/verificar-codigo:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/auth/telefono/completar - crea la cuenta (sin contraseña ni correo) para un
+// celular ya verificado por OTP. El registro_token es de un solo uso (se borra al usarlo).
+router.post('/telefono/completar', async (req, res) => {
+    const celularNormalizado = normalizarCelular(req.body.celular);
+    const { registro_token, equipos_favoritos } = req.body;
+    const nombreLimpio = String(req.body.nombre || '').trim();
+
+    if (!celularNormalizado || !registro_token) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+    if (!nombreLimpio) {
+        return res.status(400).json({ success: false, error: 'Ingresa tu nombre completo' });
+    }
+
+    const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+            'SELECT * FROM codigos_telefono WHERE celular = $1 AND registro_token = $2 FOR UPDATE',
+            [celularNormalizado, registro_token]
+        );
+
+        if (rows.length === 0 || new Date(rows[0].expira) < new Date()) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'La verificación venció. Solicita un nuevo código.' });
+        }
+
+        await client.query('DELETE FROM codigos_telefono WHERE celular = $1', [celularNormalizado]);
+
+        const { rows: nuevoUsuario } = await client.query(
+            `INSERT INTO usuarios (nombre, celular, equipos_favoritos) VALUES ($1, $2, $3)
+             RETURNING id, nombre, celular, equipos_favoritos, calendario_token`,
+            [nombreLimpio, celularNormalizado, equipos]
+        );
+
+        await client.query('COMMIT');
+        return res.json({ success: true, usuario: nuevoUsuario[0] });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en /auth/telefono/completar:', err.message);
+        if (err.code === '23505') {
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este celular.' });
+        }
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
     }
 });
 

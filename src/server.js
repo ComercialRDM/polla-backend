@@ -352,6 +352,21 @@ app.listen(PORT, async () => {
         console.error('Error creando tabla bonos_colombia:', err.message);
     }
 
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS codigos_telefono (
+                celular         VARCHAR(20) PRIMARY KEY,
+                codigo          VARCHAR(6) NOT NULL,
+                expira          TIMESTAMPTZ NOT NULL,
+                intentos        INTEGER NOT NULL DEFAULT 0,
+                registro_token  UUID,
+                fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla codigos_telefono:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

@@ -169,6 +169,21 @@ CREATE TABLE IF NOT EXISTS local_usuarios (
 );
 
 -- ============================================================
+-- Tabla: codigos_telefono
+-- Códigos de un solo uso para "Continuar con teléfono" (login/registro sin
+-- contraseña por WhatsApp). Va por celular y no por usuario_id porque debe
+-- funcionar también para números que todavía no tienen cuenta.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS codigos_telefono (
+    celular         VARCHAR(20) PRIMARY KEY,
+    codigo          VARCHAR(6) NOT NULL,
+    expira          TIMESTAMPTZ NOT NULL,
+    intentos        INTEGER NOT NULL DEFAULT 0,
+    registro_token  UUID,
+    fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)
