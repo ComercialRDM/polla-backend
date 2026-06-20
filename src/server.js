@@ -17,7 +17,7 @@ const simuladorRouter = require('./routes/simulador');
 const localRouter = require('./routes/local');
 const partidosRouter  = require('./routes/partidos');
 const passkeysRouter  = require('./routes/passkeys');
-const { authLimiter, adminLimiter, transaccionesLimiter } = require('./middleware/rateLimiters');
+const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
@@ -68,12 +68,12 @@ app.get('/health', (req, res) => {
 
 app.use('/api/transacciones', transaccionesLimiter, transaccionesRouter);
 app.use('/api/webhooks', webhooksRouter);
-app.use('/api/polla', pollaRouter);
+app.use('/api/polla', pollaLimiter, pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/local', adminLimiter, localRouter);
-app.use('/api/partidos', partidosRouter);
+app.use('/api/partidos', pollaLimiter, partidosRouter);
 app.use('/api/passkey', passkeysRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí

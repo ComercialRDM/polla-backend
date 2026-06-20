@@ -279,19 +279,26 @@ router.patch('/partidos/:id', async (req, res) => {
 
     valores.push(id);
 
+    // Todo el cierre del partido + reparto del Bono Colombia corre en una sola
+    // transacción con el partido bloqueado (SELECT FOR UPDATE): si dos
+    // peticiones llegan casi al mismo tiempo para el mismo partido (doble clic,
+    // reintento automático), la segunda espera a que la primera termine en vez
+    // de leer el marcador a medio actualizar o mandar los correos de ganadores
+    // dos veces.
+    const client = await pool.connect();
     try {
-        const { rows } = await pool.query(
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM partidos WHERE id = $1 FOR UPDATE', [id]);
+
+        const { rows } = await client.query(
             `UPDATE partidos SET ${campos.join(', ')} WHERE id = $${i} RETURNING id, equipo_local, equipo_visitante, fecha_hora_inicio, goles_local, goles_visitante, estado, fase`,
             valores
         );
         if (rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
         }
         const partido = rows[0];
-        invalidate('partidos:lista');
-        invalidate(`ranking:${id}`);
-        invalidate(`resumen:${id}`);
-        notificar(id);
 
         // Bono Colombia $500K: se activa al cerrar un partido de Colombia en fase grupos con marcador
         let bonoColombia = null;
@@ -302,7 +309,7 @@ router.patch('/partidos/:id', async (req, res) => {
             partido.goles_visitante !== null &&
             (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia')
         ) {
-            const { rows: exactos } = await pool.query(
+            const { rows: exactos } = await client.query(
                 `SELECT pr.usuario_id, u.nombre, u.correo, u.celular
                  FROM pronosticos pr
                  JOIN usuarios u ON u.id = pr.usuario_id
@@ -314,23 +321,31 @@ router.patch('/partidos/:id', async (req, res) => {
             if (exactos.length > 0) {
                 const montoPorGanador = Math.floor(500000 / exactos.length);
                 const nombrePartido = `${partido.equipo_local} ${partido.goles_local} - ${partido.goles_visitante} ${partido.equipo_visitante}`;
+                const ganadoresNuevos = [];
                 for (const g of exactos) {
-                    await pool.query(
+                    const { rows: insertado } = await client.query(
                         `INSERT INTO bonos_colombia (partido_id, usuario_id, monto_cop)
-                         VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING`,
+                         VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING
+                         RETURNING id`,
                         [id, g.usuario_id, montoPorGanador]
                     );
-                    if (g.correo) {
-                        enviarCorreoBonoColWinner({
-                            destinatario: g.correo,
-                            nombre: g.nombre,
-                            partido: nombrePartido,
-                            monto: montoPorGanador,
-                        }).catch((err) => console.error('Error enviando email Bono Colombia:', err.message));
+                    // Solo se notifica si esta fila se insertó ahora (evita reenviar el
+                    // correo si el cierre se reintenta sobre un partido ya procesado).
+                    if (insertado.length > 0) {
+                        ganadoresNuevos.push(g);
+                        if (g.correo) {
+                            enviarCorreoBonoColWinner({
+                                destinatario: g.correo,
+                                nombre: g.nombre,
+                                partido: nombrePartido,
+                                monto: montoPorGanador,
+                            }).catch((err) => console.error('Error enviando email Bono Colombia:', err.message));
+                        }
                     }
                 }
                 bonoColombia = {
                     ganadores: exactos.map((g) => ({ nombre: g.nombre, celular: g.celular })),
+                    nuevos: ganadoresNuevos.length,
                     montoPorGanador,
                     totalDistribuido: montoPorGanador * exactos.length,
                 };
@@ -339,10 +354,20 @@ router.patch('/partidos/:id', async (req, res) => {
             }
         }
 
+        await client.query('COMMIT');
+
+        invalidate('partidos:lista');
+        invalidate(`ranking:${id}`);
+        invalidate(`resumen:${id}`);
+        notificar(id);
+
         return res.json({ success: true, partido, bonoColombia });
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Error en /admin/partidos PATCH:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
     }
 });
 

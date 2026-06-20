@@ -7,6 +7,7 @@ const { CUPO_VALOR } = require('../config/planes');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
+const { votarLimiter } = require('../middleware/rateLimiters');
 
 const router = express.Router();
 
@@ -266,7 +267,7 @@ router.put('/equipos-favoritos', async (req, res) => {
 
 // POST /api/polla/votar
 // Registra el pronóstico (un marcador) de un usuario para un partido, consumiendo 1 cupo de su monedero.
-router.post('/votar', async (req, res) => {
+router.post('/votar', votarLimiter, async (req, res) => {
     const { token_acceso, partido_id, local, visitante } = req.body;
 
     if (
@@ -776,12 +777,17 @@ router.get('/flash', async (req, res) => {
     }
 });
 
-// POST /api/polla/votar-flash - pronóstico gratuito en promoción relámpago
-router.post('/votar-flash', async (req, res) => {
-    const { usuario_id, partido_id, local, visitante } = req.body;
+// POST /api/polla/votar-flash - pronóstico gratuito en promoción relámpago.
+// Recibe el celular (no el usuario_id) y resuelve el usuario en el servidor:
+// el usuario_id es un entero secuencial adivinable, así que aceptarlo directo
+// del cliente permitiría votar a nombre de cualquier otra persona (y "quemar"
+// su único intento en la promoción antes de que ella misma pueda participar).
+router.post('/votar-flash', votarLimiter, async (req, res) => {
+    const { celular, partido_id, local, visitante } = req.body;
+    const celularNormalizado = String(celular || '').replace(/[^0-9+]/g, '').trim();
 
     if (
-        !usuario_id || !partido_id ||
+        !celularNormalizado || !partido_id ||
         typeof local !== 'number' || typeof visitante !== 'number' ||
         local < 0 || visitante < 0 ||
         !Number.isInteger(local) || !Number.isInteger(visitante)
@@ -791,12 +797,13 @@ router.post('/votar-flash', async (req, res) => {
 
     try {
         const { rows: usuarioRows } = await pool.query(
-            'SELECT id, nombre, correo FROM usuarios WHERE id = $1',
-            [usuario_id]
+            `SELECT id, nombre, correo FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            [celularNormalizado]
         );
         if (usuarioRows.length === 0) {
             return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
         }
+        const usuario_id = usuarioRows[0].id;
 
         const { rows: partidoRows } = await pool.query(
             'SELECT * FROM partidos WHERE id = $1',
