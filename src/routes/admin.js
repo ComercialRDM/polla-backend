@@ -701,6 +701,77 @@ router.post('/test-whatsapp', async (req, res) => {
     return res.json({ success: true, paso: 'sendContent', subscriberId, metodo, celularFormateado });
 });
 
+// GET /api/admin/ranking-global?limit=100 - top N usuarios por puntos totales
+// acumulados en todos los partidos cerrados (misma fórmula de puntaje que
+// /api/polla/resultados-finales, pero sin tope de 3 y con datos de contacto).
+router.get('/ranking-global', async (req, res) => {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    try {
+        const { rows } = await pool.query(
+            `SELECT u.id, u.nombre, u.celular, u.correo,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                 AND pa.goles_local IS NOT NULL
+                            THEN CASE pa.fase
+                                WHEN 'grupos'        THEN 100
+                                WHEN 'dieciseisavos' THEN 120
+                                WHEN 'octavos'       THEN 200
+                                WHEN 'cuartos'       THEN 250
+                                WHEN 'semifinal'     THEN 800
+                                WHEN 'final'         THEN 2000
+                                ELSE 100 END
+                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                            THEN CASE pa.fase
+                                WHEN 'grupos'        THEN 50
+                                WHEN 'dieciseisavos' THEN 60
+                                WHEN 'octavos'       THEN 100
+                                WHEN 'cuartos'       THEN 125
+                                WHEN 'semifinal'     THEN 400
+                                WHEN 'final'         THEN 1000
+                                ELSE 50 END
+                            ELSE 0
+                        END
+                    ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
+                    COUNT(
+                        CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                  AND pa.goles_local IS NOT NULL THEN 1 END
+                    ) AS exactos
+             FROM usuarios u
+             LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+             LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+             GROUP BY u.id, u.nombre, u.celular, u.correo, u.puntos_bonus
+             HAVING COALESCE(SUM(
+                        CASE
+                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                 AND pa.goles_local IS NOT NULL THEN 1 ELSE 0
+                        END
+                    ), 0) > 0 OR COALESCE(u.puntos_bonus, 0) > 0 OR COUNT(pr.id) > 0
+             ORDER BY puntos_total DESC, exactos DESC
+             LIMIT $1`,
+            [limit]
+        );
+
+        return res.json({
+            success: true,
+            ranking: rows.map((u, i) => ({
+                posicion: i + 1,
+                id: u.id,
+                nombre: u.nombre,
+                celular: u.celular,
+                correo: u.correo,
+                puntos: Number(u.puntos_total),
+                exactos: Number(u.exactos),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en GET /admin/ranking-global:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
 router.get('/bonos-colombia', async (req, res) => {
     try {
