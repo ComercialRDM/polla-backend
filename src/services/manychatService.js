@@ -35,19 +35,30 @@ async function manychatRequest(path, body, method = 'POST') {
     return data;
 }
 
-// Campos de sistema que se intentan, en orden, para recuperar un suscriptor
-// existente cuando createSubscriber falla con "already exists". ManyChat no
-// permite buscar de forma confiable por "whatsapp_phone" (limitación conocida
-// de su API: ese filtro busca contactos de SMS, no de WhatsApp), así que
-// también se intenta con "phone" como respaldo antes de rendirse.
-const CAMPOS_BUSQUEDA_SUBSCRIBER = ['whatsapp_phone', 'phone'];
+/**
+ * Variantes de la llamada a findBySystemField que se intentan, en orden, para
+ * recuperar un suscriptor existente cuando createSubscriber falla con
+ * "already exists". El formato "system_field=X&value=Y" devuelve
+ * "Only phone or email can be specified" sin importar el valor de X (probado
+ * con whatsapp_phone y phone), así que también se intenta el formato con el
+ * nombre del campo como parámetro directo (?phone=... / ?whatsapp_phone=...).
+ * @param {string} waId celular sin '+' | @param {string} waIdConMas celular con '+'
+ */
+function variantesBusquedaSubscriber(waId, waIdConMas) {
+    return [
+        { nombre: 'param-directo:whatsapp_phone', url: `/fb/subscriber/findBySystemField?whatsapp_phone=${encodeURIComponent(waIdConMas)}` },
+        { nombre: 'param-directo:phone', url: `/fb/subscriber/findBySystemField?phone=${encodeURIComponent(waIdConMas)}` },
+        { nombre: 'system_field:whatsapp_phone', url: `/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}` },
+        { nombre: 'system_field:phone', url: `/fb/subscriber/findBySystemField?system_field=phone&value=${waId}` },
+    ];
+}
 
 /**
  * Obtiene el subscriber_id de ManyChat para el celular dado: intenta crear el
- * suscriptor y, si ya existe, lo busca por los campos de sistema disponibles.
- * Devuelve también el diagnóstico completo (payloads y respuestas de ManyChat)
- * para poder mostrarlo en herramientas de prueba sin tener que duplicar esta
- * lógica en otro archivo.
+ * suscriptor y, si ya existe, lo busca probando varias variantes de
+ * findBySystemField. Devuelve también el diagnóstico completo (payloads y
+ * respuestas de ManyChat) para poder mostrarlo en herramientas de prueba sin
+ * tener que duplicar esta lógica en otro archivo.
  * @param {string} celular
  * @returns {Promise<{ subscriberId: string|number|null, metodo: string|null, diagnostico: object }>}
  */
@@ -71,18 +82,14 @@ async function obtenerSubscriberId(celular) {
     }
 
     // El suscriptor ya existe en ManyChat: se intenta recuperar su ID probando
-    // los campos de sistema disponibles, uno por uno.
+    // varias variantes de la búsqueda, una por una.
     const busquedas = {};
-    for (const systemField of CAMPOS_BUSQUEDA_SUBSCRIBER) {
-        const busqueda = await manychatRequest(
-            `/fb/subscriber/findBySystemField?system_field=${systemField}&value=${waId}`,
-            null,
-            'GET'
-        );
-        console.log(`[ManyChat] findBySystemField(${systemField})`, { celular: waId, respuesta: busqueda });
-        busquedas[systemField] = busqueda;
+    for (const { nombre, url } of variantesBusquedaSubscriber(waId, whatsappPhone)) {
+        const busqueda = await manychatRequest(url, null, 'GET');
+        console.log(`[ManyChat] findBySystemField (${nombre})`, { celular: waId, url, respuesta: busqueda });
+        busquedas[nombre] = busqueda;
         if (busqueda?.data?.id) {
-            return { subscriberId: busqueda.data.id, metodo: `findBySystemField:${systemField}`, diagnostico: { crear, busquedas } };
+            return { subscriberId: busqueda.data.id, metodo: `findBySystemField:${nombre}`, diagnostico: { crear, busquedas } };
         }
     }
 
