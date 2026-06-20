@@ -664,15 +664,26 @@ router.post('/test-whatsapp', async (req, res) => {
         });
     }
 
-    // Si el subscriber_id se acaba de resolver (no venía ya guardado) y existe un
-    // usuario con este celular, se guarda para que la próxima prueba/envío no
-    // tenga que volver a preguntarle a ManyChat.
+    // Si el subscriber_id se acaba de resolver (no venía ya guardado), se guarda
+    // para que la próxima prueba/envío no tenga que volver a preguntarle a
+    // ManyChat. Si el celular no tiene cuenta todavía (p. ej. un número usado
+    // solo para esta prueba), se crea una cuenta mínima de prueba — si no, cada
+    // reintento volvería a chocar con "ya existe" sin poder recordar el ID.
     if (metodo !== 'usuarios.manychat_subscriber_id') {
-        await pool.query(
+        const celularNormalizado = String(celular || '').replace(/[^0-9+]/g, '');
+        const { rowCount } = await pool.query(
             `UPDATE usuarios SET manychat_subscriber_id = $1
              WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $2 AND manychat_subscriber_id IS NULL`,
-            [String(subscriberId), String(celular || '').replace(/[^0-9+]/g, '')]
+            [String(subscriberId), celularNormalizado]
         );
+        if (rowCount === 0) {
+            await pool.query(
+                `INSERT INTO usuarios (nombre, celular, manychat_subscriber_id) VALUES ('Prueba WhatsApp Admin', $1, $2)
+                 ON CONFLICT (celular) DO UPDATE SET manychat_subscriber_id = EXCLUDED.manychat_subscriber_id
+                 WHERE usuarios.manychat_subscriber_id IS NULL`,
+                [celularNormalizado, String(subscriberId)]
+            );
+        }
     }
 
     // Paso 2: sendContent (reusando enviarMensajeManyChat con el subscriberId ya
