@@ -11,7 +11,7 @@ const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
-const { enviarMensajeManyChat, formatearCelularWhatsApp } = require('../services/manychatService');
+const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
 
 const router = express.Router();
 
@@ -627,82 +627,67 @@ function calcPuntos(partido, predLocal, predVisitante) {
     return 0;
 }
 
-// POST /api/admin/test-whatsapp - diagnóstico paso a paso: createSubscriber → sendContent
+// POST /api/admin/test-whatsapp - diagnóstico paso a paso: buscar/crear suscriptor → sendContent.
+// Usa obtenerSubscriberId() de manychatService.js (misma lógica que los envíos reales,
+// para no duplicar el manejo de "el suscriptor ya existe en ManyChat").
 router.post('/test-whatsapp', async (req, res) => {
     const { celular } = req.body;
     if (!celular) return res.status(400).json({ success: false, error: 'Falta celular' });
 
-    const apiKey = process.env.MANYCHAT_API_KEY;
-    if (!apiKey) {
+    if (!process.env.MANYCHAT_API_KEY) {
         return res.json({ success: false, error: 'MANYCHAT_API_KEY no está configurada en las variables de entorno de Render.' });
     }
 
-    const axios = require('axios');
-    const BASE = process.env.MANYCHAT_API_URL || 'https://api.manychat.com';
-    const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
     const celularFormateado = `+${formatearCelularWhatsApp(celular)}`;
 
-    // Paso 1: createSubscriber
-    let paso1;
-    try {
-        const { data } = await axios.post(`${BASE}/fb/subscriber/createSubscriber`,
-            { whatsapp_phone: celularFormateado, consent_phrase: 'Acepto recibir mensajes de La Retoucherie' },
-            { headers, validateStatus: () => true }
-        );
-        paso1 = data;
-    } catch (err) {
-        return res.json({ success: false, paso: 'createSubscriber', error: err.message, celularFormateado });
-    }
+    // Paso 0: si ya tenemos guardado el subscriber_id para este celular (de un envío
+    // exitoso previo), se reutiliza directo y no se le pregunta nada a ManyChat.
+    const { rows } = await pool.query(
+        `SELECT manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+        [String(celular || '').replace(/[^0-9+]/g, '')]
+    );
+    let subscriberId = rows[0]?.manychat_subscriber_id || null;
+    let metodo = subscriberId ? 'usuarios.manychat_subscriber_id' : null;
+    let diagnostico = null;
 
-    let subscriberId = paso1?.data?.id;
-
-    // Paso 1b: si createSubscriber falló (suscriptor ya existe), buscarlo por WhatsApp phone
-    let paso1b = null;
-    if (!subscriberId && paso1?.status === 'error') {
-        const waId = formatearCelularWhatsApp(celular); // sin '+'
-        try {
-            const { data } = await axios.get(
-                `${BASE}/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}`,
-                { headers, validateStatus: () => true }
-            );
-            paso1b = data;
-            subscriberId = data?.data?.id || null;
-        } catch (err) {
-            paso1b = { error: err.message };
-        }
+    if (!subscriberId) {
+        ({ subscriberId, metodo, diagnostico } = await obtenerSubscriberId(celular));
     }
 
     if (!subscriberId) {
         return res.json({
             success: false,
-            paso: 'createSubscriber + findBySystemField — subscriber ID no encontrado',
+            paso: 'obtenerSubscriberId — subscriber ID no encontrado',
             celularFormateado,
-            error: `ManyChat no devolvió subscriber_id en ninguno de los dos intentos.`,
-            detalles: paso1,
-            detalles_busqueda: paso1b,
+            error: 'ManyChat no devolvió subscriber_id en ningún intento (createSubscriber ni findBySystemField).',
+            detalles: diagnostico,
         });
     }
 
-    // Paso 2: sendContent
-    let paso2;
-    try {
-        const { data } = await axios.post(`${BASE}/fb/sending/sendContent`, {
-            subscriber_id: subscriberId,
-            data: { version: 'v2', content: { type: 'whatsapp', messages: [{ type: 'text', text: '🧪 Prueba — Polla Mundialista La Retoucherie. Si recibes esto, WhatsApp funciona.' }] } },
-        }, { headers, validateStatus: () => true });
-        paso2 = data;
-    } catch (err) {
-        return res.json({ success: false, paso: 'sendContent', subscriberId, celularFormateado, error: err.message, detalles: paso1 });
+    // Si el subscriber_id se acaba de resolver (no venía ya guardado) y existe un
+    // usuario con este celular, se guarda para que la próxima prueba/envío no
+    // tenga que volver a preguntarle a ManyChat.
+    if (metodo !== 'usuarios.manychat_subscriber_id') {
+        await pool.query(
+            `UPDATE usuarios SET manychat_subscriber_id = $1
+             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $2 AND manychat_subscriber_id IS NULL`,
+            [String(subscriberId), String(celular || '').replace(/[^0-9+]/g, '')]
+        );
     }
 
-    return res.json({
-        success: paso2?.status === 'success',
-        paso: 'sendContent',
-        subscriberId,
-        celularFormateado,
-        detalles: paso2,
-        ...(paso2?.status !== 'success' && { error: `sendContent falló: ${JSON.stringify(paso2)}` }),
-    });
+    // Paso 2: sendContent (reusando enviarMensajeManyChat con el subscriberId ya
+    // resuelto, para no duplicar tampoco la llamada de envío)
+    try {
+        await enviarMensajeManyChat({
+            celular,
+            mensaje: '🧪 Prueba — Polla Mundialista La Retoucherie. Si recibes esto, WhatsApp funciona.',
+            subscriberId,
+        });
+    } catch (err) {
+        return res.json({ success: false, paso: 'sendContent', subscriberId, metodo, celularFormateado, error: err.message });
+    }
+
+    return res.json({ success: true, paso: 'sendContent', subscriberId, metodo, celularFormateado });
 });
 
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia

@@ -35,40 +35,59 @@ async function manychatRequest(path, body, method = 'POST') {
     return data;
 }
 
+// Campos de sistema que se intentan, en orden, para recuperar un suscriptor
+// existente cuando createSubscriber falla con "already exists". ManyChat no
+// permite buscar de forma confiable por "whatsapp_phone" (limitación conocida
+// de su API: ese filtro busca contactos de SMS, no de WhatsApp), así que
+// también se intenta con "phone" como respaldo antes de rendirse.
+const CAMPOS_BUSQUEDA_SUBSCRIBER = ['whatsapp_phone', 'phone'];
+
 /**
- * Obtiene el subscriber_id de ManyChat para el celular dado.
- * Intenta crear el suscriptor; si ya existe, lo busca por WhatsApp phone.
+ * Obtiene el subscriber_id de ManyChat para el celular dado: intenta crear el
+ * suscriptor y, si ya existe, lo busca por los campos de sistema disponibles.
+ * Devuelve también el diagnóstico completo (payloads y respuestas de ManyChat)
+ * para poder mostrarlo en herramientas de prueba sin tener que duplicar esta
+ * lógica en otro archivo.
+ * @param {string} celular
+ * @returns {Promise<{ subscriberId: string|number|null, metodo: string|null, diagnostico: object }>}
  */
-async function crearSubscriberId(celular) {
+async function obtenerSubscriberId(celular) {
     const whatsappPhone = `+${formatearCelularWhatsApp(celular)}`;
     const waId = formatearCelularWhatsApp(celular); // sin '+'
 
-    // Intento 1: crear suscriptor
-    const respuesta = await manychatRequest('/fb/subscriber/createSubscriber', {
+    const payloadCrear = {
         whatsapp_phone: whatsappPhone,
         consent_phrase: 'Acepto recibir mensajes de La Retoucherie por WhatsApp',
-    });
+    };
+    const crear = await manychatRequest('/fb/subscriber/createSubscriber', payloadCrear);
+    console.log('[ManyChat] createSubscriber', { celular: waId, payload: payloadCrear, respuesta: crear });
 
-    if (respuesta?.data?.id) {
-        return respuesta.data.id;
+    if (crear?.data?.id) {
+        return { subscriberId: crear.data.id, metodo: 'createSubscriber', diagnostico: { crear } };
     }
 
-    // Intento 2: si ya existe ("This WhatsApp ID already exists"), buscarlo
-    if (respuesta?.status === 'error') {
-        const findResp = await manychatRequest(
-            `/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}`,
+    if (crear?.status !== 'error') {
+        return { subscriberId: null, metodo: null, diagnostico: { crear } };
+    }
+
+    // El suscriptor ya existe en ManyChat: se intenta recuperar su ID probando
+    // los campos de sistema disponibles, uno por uno.
+    const busquedas = {};
+    for (const systemField of CAMPOS_BUSQUEDA_SUBSCRIBER) {
+        const busqueda = await manychatRequest(
+            `/fb/subscriber/findBySystemField?system_field=${systemField}&value=${waId}`,
             null,
             'GET'
         );
-        if (findResp?.data?.id) {
-            return findResp.data.id;
+        console.log(`[ManyChat] findBySystemField(${systemField})`, { celular: waId, respuesta: busqueda });
+        busquedas[systemField] = busqueda;
+        if (busqueda?.data?.id) {
+            return { subscriberId: busqueda.data.id, metodo: `findBySystemField:${systemField}`, diagnostico: { crear, busquedas } };
         }
-        console.error('No se pudo encontrar el suscriptor de ManyChat para', celular,
-            '| create:', JSON.stringify(respuesta),
-            '| find:', JSON.stringify(findResp));
     }
 
-    return null;
+    console.error('No se pudo encontrar el suscriptor de ManyChat para', celular, JSON.stringify({ crear, busquedas }));
+    return { subscriberId: null, metodo: null, diagnostico: { crear, busquedas } };
 }
 
 /**
@@ -86,7 +105,7 @@ async function enviarContenidoManyChat({ celular, messages, subscriberId }) {
 
     let id = subscriberId;
     if (!id) {
-        id = await crearSubscriberId(celular);
+        ({ subscriberId: id } = await obtenerSubscriberId(celular));
     }
 
     if (!id) {
@@ -134,4 +153,4 @@ async function enviarBonoManyChat({ celular, mensaje, imagenUrl, subscriberId })
     });
 }
 
-module.exports = { enviarMensajeManyChat, enviarBonoManyChat, formatearCelularWhatsApp };
+module.exports = { enviarMensajeManyChat, enviarBonoManyChat, formatearCelularWhatsApp, obtenerSubscriberId };
