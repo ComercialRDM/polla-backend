@@ -897,6 +897,7 @@ router.get('/resultados-finales', async (req, res) => {
             FROM usuarios u
             LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
             LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+            WHERE u.es_test = FALSE
             GROUP BY u.id, u.nombre, u.puntos_bonus
             ORDER BY puntos_total DESC, exactos DESC
             LIMIT 3
@@ -906,7 +907,7 @@ router.get('/resultados-finales', async (req, res) => {
             'SELECT primero, segundo, tercero FROM pozo_premios WHERE id = 1'
         );
         const { rows: countRows } = await pool.query(
-            'SELECT COUNT(*)::int AS total FROM usuarios'
+            'SELECT COUNT(*)::int AS total FROM usuarios WHERE es_test = FALSE'
         );
 
         const premios = pozoRows[0] || { primero: 2000000, segundo: 1000000, tercero: 500000 };

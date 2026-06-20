@@ -313,6 +313,15 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de compartidas/puntos_bonus:', err.message);
     }
 
+    // Cuentas de prueba (admin probando el flujo, etc.): se excluyen del ranking
+    // global y de los resultados finales, igual que ya se hace con
+    // transacciones.es_test para reportes/rankings públicos.
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS es_test BOOLEAN NOT NULL DEFAULT FALSE`);
+    } catch (err) {
+        console.error('Error aplicando migración de usuarios.es_test:', err.message);
+    }
+
     try {
         await pool.query(`ALTER TABLE partidos ADD COLUMN IF NOT EXISTS fase TEXT NOT NULL DEFAULT 'grupos' CHECK (fase IN ('grupos','dieciseisavos','octavos','cuartos','semifinal','final'))`);
         await pool.query(`ALTER TABLE pronosticos ADD COLUMN IF NOT EXISTS cupos_costo INTEGER NOT NULL DEFAULT 1`);

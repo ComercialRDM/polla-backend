@@ -767,6 +767,7 @@ router.get('/ranking-global', async (req, res) => {
              FROM usuarios u
              LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
              LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+             WHERE u.es_test = FALSE
              GROUP BY u.id, u.nombre, u.celular, u.correo, u.puntos_bonus
              HAVING COALESCE(SUM(
                         CASE
@@ -924,6 +925,31 @@ router.get('/usuarios', async (req, res) => {
         return res.json({ success: true, total: rows.length, usuarios: rows });
     } catch (err) {
         console.error('Error en GET /admin/usuarios:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/usuarios/:id/es-test - marca/desmarca una cuenta como de
+// prueba (excluida del ranking global y de los resultados finales públicos)
+router.patch('/usuarios/:id/es-test', async (req, res) => {
+    const { id } = req.params;
+    const { es_test } = req.body;
+
+    if (typeof es_test !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'Falta es_test (boolean)' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            'UPDATE usuarios SET es_test = $1 WHERE id = $2 RETURNING id, nombre, es_test',
+            [es_test, id]
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+        }
+        return res.json({ success: true, usuario: rows[0] });
+    } catch (err) {
+        console.error('Error en PATCH /admin/usuarios/:id/es-test:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

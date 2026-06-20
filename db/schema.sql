@@ -37,6 +37,10 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS manychat_subscriber_id TEXT;
 -- ID de cuenta de Google (sub del token) para login con Google
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
 
+-- Cuentas de prueba (admin probando el flujo, etc.): se excluyen del ranking
+-- global y de los resultados finales públicos.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS es_test BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: admin_usuarios
 -- Cuentas individuales para acceder al panel de administración
