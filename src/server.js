@@ -153,6 +153,7 @@ app.listen(PORT, async () => {
 
         await pool.query(`ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS totp_secret TEXT`);
         await pool.query(`ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`);
 
         // Si la tabla está vacía, se crea la primera cuenta a partir de
         // ADMIN_SEED_USUARIO / ADMIN_SEED_PASSWORD para no quedar sin acceso.
@@ -202,6 +203,7 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE local_usuarios ADD COLUMN IF NOT EXISTS correo TEXT`);
         await pool.query(`ALTER TABLE local_usuarios ADD COLUMN IF NOT EXISTS totp_secret TEXT`);
         await pool.query(`ALTER TABLE local_usuarios ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE local_usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`);
 
         // Si la tabla está vacía, se crean las cuentas de los locales a partir de
         // LOCAL_SEED_USUARIO_1..5 / LOCAL_SEED_PASSWORD_1..5 / LOCAL_SEED_NOMBRE_1..5

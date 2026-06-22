@@ -23,11 +23,15 @@ function firmar(data) {
  * para que cada middleware (RBAC) lo verifique: "ADMIN" para admin_usuarios,
  * "LOCAL" para local_usuarios (cuentas de redención de bonos por local),
  * "USUARIO" para clientes finales (ver src/utils/userTokens.js).
- * @param {{ id: number, usuario: string, role?: string, vigenciaSeg?: number }} datos
+ * `tv` (token_version) permite revocar todas las sesiones existentes de una
+ * cuenta: el middleware compara este valor contra el de la base de datos en
+ * cada request, así un cambio de contraseña o de 2FA invalida tokens viejos
+ * aunque no hayan expirado todavía.
+ * @param {{ id: number, usuario: string, role?: string, vigenciaSeg?: number, tv?: number }} datos
  * @returns {string}
  */
-function generarToken({ id, usuario, role = 'ADMIN', vigenciaSeg = TOKEN_VIGENCIA_SEG }) {
-    const payload = JSON.stringify({ id, usuario, role, exp: Math.floor(Date.now() / 1000) + vigenciaSeg });
+function generarToken({ id, usuario, role = 'ADMIN', vigenciaSeg = TOKEN_VIGENCIA_SEG, tv = 0 }) {
+    const payload = JSON.stringify({ id, usuario, role, tv, exp: Math.floor(Date.now() / 1000) + vigenciaSeg });
     const payloadB64 = base64url(payload);
     return `${payloadB64}.${firmar(payloadB64)}`;
 }
@@ -52,7 +56,7 @@ function verificarToken(token) {
     try {
         const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
         if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
-        return { id: payload.id, usuario: payload.usuario, role: payload.role };
+        return { id: payload.id, usuario: payload.usuario, role: payload.role, tv: payload.tv ?? 0 };
     } catch {
         return null;
     }

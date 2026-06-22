@@ -25,7 +25,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            'SELECT id, usuario, password_hash, totp_secret, totp_enabled FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
+            'SELECT id, usuario, password_hash, totp_secret, totp_enabled, token_version FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
             [usuario]
         );
 
@@ -49,7 +49,7 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario });
+        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, tv: rows[0].token_version });
         return res.json({ success: true, token, usuario: rows[0].usuario });
     } catch (err) {
         console.error('Error en /admin/login:', err);
@@ -109,7 +109,10 @@ router.post('/2fa/desactivar', async (req, res) => {
         if (!speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 })) {
             return res.status(401).json({ success: false, error: 'Código incorrecto' });
         }
-        await pool.query('UPDATE admin_usuarios SET totp_secret = NULL, totp_enabled = FALSE WHERE id = $1', [adminId]);
+        // token_version + 1: si alguien con un token robado desactivó el 2FA para
+        // debilitar la cuenta, esta misma acción invalida esa sesión y cualquier
+        // otra abierta, forzando a iniciar sesión de nuevo con la contraseña.
+        await pool.query('UPDATE admin_usuarios SET totp_secret = NULL, totp_enabled = FALSE, token_version = token_version + 1 WHERE id = $1', [adminId]);
         return res.json({ success: true });
     } catch (err) {
         console.error('Error en /admin/2fa/desactivar:', err);
@@ -879,7 +882,7 @@ router.patch('/local-usuarios/:id/reset-password', async (req, res) => {
         const tempPass = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join('');
 
         const hash = await bcrypt.hash(tempPass, 10);
-        await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, id]);
+        await pool.query('UPDATE local_usuarios SET password_hash = $1, token_version = token_version + 1 WHERE id = $2', [hash, id]);
 
         return res.json({ success: true, tempPass });
     } catch (err) {

@@ -19,7 +19,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            'SELECT id, usuario, nombre_local, password_hash, totp_secret, totp_enabled FROM local_usuarios WHERE usuario = $1 AND activo = TRUE',
+            'SELECT id, usuario, nombre_local, password_hash, totp_secret, totp_enabled, token_version FROM local_usuarios WHERE usuario = $1 AND activo = TRUE',
             [usuario]
         );
 
@@ -38,7 +38,7 @@ router.post('/login', async (req, res) => {
             if (!valido2fa) return res.status(401).json({ success: false, error: 'Código de verificación incorrecto' });
         }
 
-        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, role: 'LOCAL' });
+        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, role: 'LOCAL', tv: rows[0].token_version });
         return res.json({ success: true, token, usuario: rows[0].usuario, nombreLocal: rows[0].nombre_local });
     } catch (err) {
         console.error('Error en /local/login:', err);
@@ -63,7 +63,9 @@ router.post('/reset-password', async (req, res) => {
         );
 
         if (rows.length > 0) {
-            await pool.query('UPDATE local_usuarios SET password_hash = $1 WHERE id = $2', [hash, rows[0].id]);
+            // token_version + 1 invalida cualquier sesión vieja de este local (ej. si
+            // alguien más tenía acceso a una sesión abierta antes del reset).
+            await pool.query('UPDATE local_usuarios SET password_hash = $1, token_version = token_version + 1 WHERE id = $2', [hash, rows[0].id]);
             const { enviarCorreoResetLocalPassword } = require('../services/emailService');
             enviarCorreoResetLocalPassword({
                 destinatario: correo.trim().toLowerCase(),
