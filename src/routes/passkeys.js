@@ -1,4 +1,5 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const {
     generateRegistrationOptions,
     verifyRegistrationResponse,
@@ -29,20 +30,32 @@ function consumir(key) {
 
 // ── REGISTRO ────────────────────────────────────────────────────────────────
 
-// GET /api/passkey/registro-opciones?usuario_id=
-router.get('/registro-opciones', async (req, res) => {
-    const uid = parseInt(req.query.usuario_id);
-    if (!uid) return res.status(400).json({ error: 'Falta usuario_id' });
+// POST /api/passkey/registro-opciones  (body: { celular, password })
+// Antes era GET con usuario_id en query, sin ninguna verificación de identidad:
+// cualquiera podía registrar su huella/Face ID en la cuenta de otro adivinando
+// el id (entero secuencial). Ahora se exige la contraseña de la cuenta —
+// registrar una passkey da acceso permanente, así que es una acción sensible
+// que merece re-autenticación, igual que cambiar de contraseña.
+router.post('/registro-opciones', async (req, res) => {
+    const { celular, password } = req.body || {};
+    if (!celular || !password) return res.status(400).json({ error: 'Faltan celular o contraseña' });
 
     try {
+        const celularNormalizado = String(celular).replace(/[^0-9+]/g, '');
         const { rows } = await pool.query(
-            'SELECT id, nombre, celular FROM usuarios WHERE id = $1', [uid]
+            `SELECT id, nombre, celular, password_hash FROM usuarios
+             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
+            [celularNormalizado]
         );
-        if (!rows.length) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!rows.length || !rows[0].password_hash) {
+            return res.status(401).json({ error: 'Celular o contraseña incorrectos' });
+        }
         const u = rows[0];
+        const valido = await bcrypt.compare(password, u.password_hash);
+        if (!valido) return res.status(401).json({ error: 'Celular o contraseña incorrectos' });
 
         const { rows: existing } = await pool.query(
-            'SELECT credential_id, transports FROM passkeys WHERE usuario_id = $1', [uid]
+            'SELECT credential_id, transports FROM passkeys WHERE usuario_id = $1', [u.id]
         );
 
         const options = await generateRegistrationOptions({
@@ -61,8 +74,11 @@ router.get('/registro-opciones', async (req, res) => {
             },
         });
 
-        guardar(`reg:${uid}`, options.challenge);
-        return res.json(options);
+        // El challenge queda atado al id resuelto del lado del servidor (tras
+        // verificar la contraseña), no al que pueda enviar el cliente en el
+        // siguiente paso — eso es lo que cierra el hueco de IDOR.
+        guardar(`reg:${u.id}`, options.challenge);
+        return res.json({ ...options, usuario_id: u.id });
     } catch (err) {
         console.error('registro-opciones:', err.message);
         return res.status(500).json({ error: 'Error interno' });
@@ -74,6 +90,9 @@ router.post('/registro-verificar', async (req, res) => {
     const { usuario_id, response } = req.body;
     if (!usuario_id || !response) return res.status(400).json({ error: 'Faltan datos' });
 
+    // Solo existe un challenge pendiente para este usuario_id si /registro-opciones
+    // verificó antes la contraseña de esa cuenta — sin eso, consumir() no encuentra
+    // nada y la petición se rechaza, sin importar qué usuario_id se mande aquí.
     const challenge = consumir(`reg:${usuario_id}`);
     if (!challenge) return res.status(400).json({ error: 'Challenge expirado. Intenta de nuevo.' });
 
