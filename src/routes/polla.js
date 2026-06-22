@@ -193,6 +193,24 @@ router.get('/info', async (req, res) => {
     }
 });
 
+// GET /api/polla/bonos-vendidos - contador público de bonos vendidos (compras
+// aprobadas reales, sin contar cuentas de prueba), para mostrar cupos
+// restantes frente al tope real de 3000 bonos. Cacheado 60s.
+router.get('/bonos-vendidos', async (req, res) => {
+    try {
+        const total = await getOrSet('bonos-vendidos', 60 * 1000, async () => {
+            const { rows } = await pool.query(
+                `SELECT COUNT(*)::int AS total FROM transacciones WHERE estado_pago = 'APROBADO' AND es_test = FALSE`
+            );
+            return rows[0].total;
+        });
+        return res.json({ success: true, total });
+    } catch (err) {
+        console.error('Error en /polla/bonos-vendidos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/polla/verificar-acceso?contacto=
 router.get('/verificar-acceso', async (req, res) => {
     const { contacto } = req.query;

@@ -932,6 +932,53 @@ router.get('/usuarios', async (req, res) => {
     }
 });
 
+// DELETE /api/admin/usuarios/:id - borra una cuenta sin compras reales aprobadas
+// (cuentas de prueba, registros duplicados, etc.). Si tiene al menos una compra
+// aprobada que no sea de prueba, se rechaza para no perder historial real.
+// Limpia las tablas dependientes en orden (ninguna tiene ON DELETE CASCADE
+// hacia usuarios, salvo passkeys) antes de borrar la fila de usuarios.
+router.delete('/usuarios/:id', async (req, res) => {
+    const { id } = req.params;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+            `SELECT COUNT(*)::int AS compras_reales FROM transacciones
+             WHERE usuario_id = $1 AND estado_pago = 'APROBADO' AND es_test = FALSE`,
+            [id]
+        );
+        if (rows[0].compras_reales > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ success: false, error: 'Esta cuenta tiene compras reales aprobadas, no se puede borrar.' });
+        }
+
+        await client.query(
+            `DELETE FROM redenciones WHERE transaccion_id IN (SELECT id FROM transacciones WHERE usuario_id = $1)`,
+            [id]
+        );
+        await client.query('DELETE FROM pronosticos WHERE usuario_id = $1', [id]);
+        await client.query('DELETE FROM compartidas WHERE usuario_id = $1', [id]);
+        await client.query('DELETE FROM bonos_colombia WHERE usuario_id = $1', [id]);
+        await client.query('DELETE FROM transacciones WHERE usuario_id = $1', [id]);
+
+        const { rowCount } = await client.query('DELETE FROM usuarios WHERE id = $1', [id]);
+        if (rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+        }
+
+        await client.query('COMMIT');
+        return res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en DELETE /admin/usuarios/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
 // PATCH /api/admin/usuarios/:id/es-test - marca/desmarca una cuenta como de
 // prueba (excluida del ranking global y de los resultados finales públicos)
 router.patch('/usuarios/:id/es-test', async (req, res) => {
