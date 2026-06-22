@@ -317,7 +317,7 @@ router.post('/votar', votarLimiter, async (req, res) => {
 
         // Bloquear las transacciones aprobadas del usuario para serializar el cálculo del monedero
         const { rows: transaccionRows } = await client.query(
-            `SELECT id, valor_pagado FROM transacciones WHERE usuario_id = $1 AND estado_pago = 'APROBADO' FOR UPDATE`,
+            `SELECT id, valor_pagado, intentos_totales FROM transacciones WHERE usuario_id = $1 AND estado_pago = 'APROBADO' FOR UPDATE`,
             [usuario_id]
         );
 
@@ -356,9 +356,12 @@ router.post('/votar', votarLimiter, async (req, res) => {
         // Costo en cupos según la fase del partido
         const costoPartido = COSTO_CUPO_FASE[partido.fase] ?? 1;
 
-        // Validar que el usuario tenga cupos suficientes para esta fase
+        // Validar que el usuario tenga cupos suficientes para esta fase. Se suma
+        // intentos_totales (lo registrado al comprar) en vez de recalcular
+        // valor_pagado / CUPO_VALOR, que ya no es proporcional con los planes
+        // actuales (ej. $10.000 = 1 intento, $25.000 = 2 intentos).
         const cuposTotales = transaccionRows.reduce(
-            (acc, t) => acc + Math.floor(t.valor_pagado / CUPO_VALOR),
+            (acc, t) => acc + t.intentos_totales,
             0
         );
         const { rows: usadosRows } = await client.query(

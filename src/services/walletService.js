@@ -4,18 +4,22 @@ const { CUPO_VALOR } = require('../config/planes');
 /**
  * Calcula el monedero de cupos de un usuario a partir de sus transacciones
  * aprobadas y los pronósticos que ya ha registrado.
- * 1 cupo = $50.000 recargados = 1 pronóstico en un partido distinto.
+ * Los cupos totales se suman de intentos_totales (lo que se registró al
+ * comprar, según el plan vigente en ese momento) en vez de recalcularlos
+ * dividiendo valor_pagado / CUPO_VALOR — los planes no son proporcionales
+ * a un único valor de cupo (ej. $10.000 = 1 intento, $25.000 = 2 intentos),
+ * así que esa división daba un número de cupos distinto al que se vendió.
  * @param {number} usuarioId
  * @returns {Promise<{ cuposTotales: number, cuposUsados: number, cuposDisponibles: number, dineroRecargado: number, dineroDisponible: number }>}
  */
 async function obtenerSaldoUsuario(usuarioId) {
     const { rows: recargaRows } = await pool.query(
         `SELECT
-            COALESCE(SUM(FLOOR(valor_pagado / $2)), 0)::int AS cupos_totales,
+            COALESCE(SUM(intentos_totales), 0)::int AS cupos_totales,
             COALESCE(SUM(valor_pagado), 0)::int AS dinero_recargado
          FROM transacciones
          WHERE usuario_id = $1 AND estado_pago = 'APROBADO'`,
-        [usuarioId, CUPO_VALOR]
+        [usuarioId]
     );
 
     const { rows: usadosRows } = await pool.query(
