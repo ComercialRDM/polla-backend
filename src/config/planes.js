@@ -1,11 +1,8 @@
 // Planes de bonos disponibles: valor pagado (COP) -> { saldoBono, intentos }
 const PLANES = {
-    25000:   { saldoBono: 30000,   intentos: 1  },
-    50000:   { saldoBono: 70000,   intentos: 2  },
-    100000:  { saldoBono: 130000,  intentos: 4  },
-    200000:  { saldoBono: 250000,  intentos: 8  },
-    500000:  { saldoBono: 650000,  intentos: 20 },
-    1000000: { saldoBono: 1500000, intentos: 40 },
+    10000: { saldoBono: 15000, intentos: 1 },
+    25000: { saldoBono: 35000, intentos: 2 },
+    50000: { saldoBono: 80000, intentos: 3 },
 };
 
 // 1 cupo de pronóstico = $25.000 de recarga
