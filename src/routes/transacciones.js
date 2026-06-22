@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const pool = require('../db');
 const { obtenerPlan, valorACentavos } = require('../config/planes');
-const { crearPaymentLink } = require('../services/wompiService');
+const { generarFirmaIntegridad, WOMPI_PUBLIC_KEY } = require('../services/wompiService');
 
 const router = express.Router();
 
@@ -88,13 +88,15 @@ router.post('/crear-link', async (req, res) => {
         // Crear o recuperar usuario (por celular, la clave de identidad confiable)
         const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
 
-        // Evita crear un segundo Payment Link/transacción si el usuario hace doble clic
-        // o reintenta tras perder la conexión: reutiliza el link PENDIENTE más reciente
+        const amountInCents = valorACentavos(Number(valor));
+
+        // Evita crear una segunda transacción si el usuario hace doble clic o reintenta
+        // tras perder la conexión: reutiliza la transacción PENDIENTE más reciente
         // (últimos 30 min) para el mismo usuario+partido+valor en vez de duplicar el cargo.
         const { rows: pendienteExistente } = await client.query(
-            `SELECT id, payment_link_id, reference FROM transacciones
+            `SELECT id, reference, token_acceso FROM transacciones
              WHERE usuario_id = $1 AND partido_id = $2 AND valor_pagado = $3
-               AND estado_pago = 'PENDIENTE' AND metodo = 'Wompi' AND payment_link_id IS NOT NULL
+               AND estado_pago = 'PENDIENTE' AND metodo = 'Wompi' AND reference IS NOT NULL
                AND fecha_creacion > now() - interval '30 minutes'
              ORDER BY fecha_creacion DESC LIMIT 1`,
             [usuario.id, partido_id, Number(valor)]
@@ -104,7 +106,15 @@ router.post('/crear-link', async (req, res) => {
             const existente = pendienteExistente[0];
             return res.json({
                 success: true,
-                checkout_url: `https://checkout.wompi.co/l/${existente.payment_link_id}`,
+                widget: {
+                    publicKey: WOMPI_PUBLIC_KEY,
+                    currency: 'COP',
+                    amountInCents,
+                    reference: existente.reference,
+                    signatureIntegrity: generarFirmaIntegridad({ reference: existente.reference, amountInCents, currency: 'COP' }),
+                    redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${existente.token_acceso}`,
+                    customerData: { email: correo, fullName: nombre, phoneNumber: celular, phoneNumberPrefix: '+57' },
+                },
                 reference: existente.reference,
                 transaccion_id: existente.id,
             });
@@ -119,32 +129,26 @@ router.post('/crear-link', async (req, res) => {
         );
         const transaccion = transaccionRows[0];
 
-        // Construir reference
+        // Construir reference y firma de integridad (Widget Checkout de Wompi, no Payment Links:
+        // este sí soporta pre-llenar nombre/correo/celular del comprador vía customerData)
         const reference = `RET-${transaccion.id}-${celular}`;
+        const signatureIntegrity = generarFirmaIntegridad({ reference, amountInCents, currency: 'COP' });
 
-        // Crear el Payment Link en Wompi
-        const amountInCents = valorACentavos(Number(valor));
-        const { paymentLinkId, checkoutUrl } = await crearPaymentLink({
-            name: `Bono Digital - Polla Mundialista`,
-            description: `Bono Digital La Retoucherie de Manuela - $${plan.saldoBono.toLocaleString('es-CO')}`,
-            amountInCents,
-            reference,
-            redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
-            expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-            customerData: { email: correo, fullName: nombre, phoneNumber: celular },
-        });
-
-        // Guardar payment_link_id y reference
-        await client.query(
-            'UPDATE transacciones SET payment_link_id = $1, reference = $2 WHERE id = $3',
-            [paymentLinkId, reference, transaccion.id]
-        );
+        await client.query('UPDATE transacciones SET reference = $1 WHERE id = $2', [reference, transaccion.id]);
 
         await client.query('COMMIT');
 
         return res.json({
             success: true,
-            checkout_url: checkoutUrl,
+            widget: {
+                publicKey: WOMPI_PUBLIC_KEY,
+                currency: 'COP',
+                amountInCents,
+                reference,
+                signatureIntegrity,
+                redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
+                customerData: { email: correo, fullName: nombre, phoneNumber: celular, phoneNumberPrefix: '+57' },
+            },
             reference,
             transaccion_id: transaccion.id,
         });

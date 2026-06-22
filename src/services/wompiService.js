@@ -1,57 +1,18 @@
-const axios = require('axios');
 const crypto = require('crypto');
 
-const WOMPI_API_URL = process.env.WOMPI_API_URL || 'https://production.wompi.co/v1';
-const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY;
 const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET;
+const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY;
+const WOMPI_INTEGRITY_SECRET = process.env.WOMPI_INTEGRITY_SECRET;
 
 /**
- * Crea un Payment Link dinámico de un solo uso en Wompi.
- * El amount_in_cents queda fijo, así el cliente no puede alterar el valor.
+ * Firma de integridad para el Widget Checkout de Wompi.
+ * checksum = SHA256( reference + amountInCents + currency + WOMPI_INTEGRITY_SECRET )
+ * El Widget Checkout (a diferencia de los Payment Links) sí soporta pre-llenar
+ * nombre/correo/celular del comprador vía customerData, por eso se usa aquí.
  */
-async function crearPaymentLink({ name, description, amountInCents, reference, redirectUrl, expiresAt, customerData }) {
-    const body = {
-        name,
-        description,
-        single_use: true,
-        collect_shipping: false,
-        currency: 'COP',
-        amount_in_cents: amountInCents,
-        sku: reference,
-        redirect_url: redirectUrl,
-    };
-
-    if (expiresAt) {
-        body.expires_at = expiresAt;
-    }
-
-    // Pre-llena nombre/correo/celular en el Web Checkout de Wompi para que el
-    // comprador no tenga que volver a escribirlos (ya los dio en Comprar.jsx).
-    if (customerData) {
-        body.customer_data = {
-            email: customerData.email,
-            full_name: customerData.fullName,
-            phone_number: customerData.phoneNumber,
-            phone_number_prefix: '+57',
-        };
-    }
-
-    const response = await axios.post(`${WOMPI_API_URL}/payment_links`, body, {
-        headers: {
-            Authorization: `Bearer ${WOMPI_PRIVATE_KEY}`,
-            'Content-Type': 'application/json',
-        },
-    });
-
-    const linkId = response.data?.data?.id;
-    if (!linkId) {
-        throw new Error('Wompi no devolvió un id de payment link');
-    }
-
-    return {
-        paymentLinkId: linkId,
-        checkoutUrl: `https://checkout.wompi.co/l/${linkId}`,
-    };
+function generarFirmaIntegridad({ reference, amountInCents, currency = 'COP' }) {
+    const cadena = `${reference}${amountInCents}${currency}${WOMPI_INTEGRITY_SECRET}`;
+    return crypto.createHash('sha256').update(cadena).digest('hex');
 }
 
 /**
@@ -96,4 +57,4 @@ function validarFirmaWebhook(evento) {
     }
 }
 
-module.exports = { crearPaymentLink, validarFirmaWebhook };
+module.exports = { generarFirmaIntegridad, validarFirmaWebhook, WOMPI_PUBLIC_KEY };
