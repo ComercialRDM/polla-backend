@@ -303,7 +303,7 @@ router.patch('/partidos/:id', async (req, res) => {
         }
         const partido = rows[0];
 
-        // Bono Colombia $500K: se activa al cerrar un partido de Colombia en fase grupos con marcador
+        // Bono Colombia $1M: se activa al cerrar un partido de Colombia en fase grupos con marcador
         let bonoColombia = null;
         if (
             partido.estado === 'cerrado' &&
@@ -322,7 +322,7 @@ router.patch('/partidos/:id', async (req, res) => {
                 [id, partido.goles_local, partido.goles_visitante]
             );
             if (exactos.length > 0) {
-                const montoPorGanador = Math.floor(500000 / exactos.length);
+                const montoPorGanador = Math.floor(1000000 / exactos.length);
                 const nombrePartido = `${partido.equipo_local} ${partido.goles_local} - ${partido.goles_visitante} ${partido.equipo_visitante}`;
                 const ganadoresNuevos = [];
                 for (const g of exactos) {

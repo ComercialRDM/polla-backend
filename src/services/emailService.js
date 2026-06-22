@@ -177,7 +177,7 @@ async function enviarCorreoResetPassword({ destinatario, nombre, codigo, vigenci
 }
 
 /**
- * Notifica a un ganador del Bono Colombia $500K que acertó el marcador exacto.
+ * Notifica a un ganador del Bono Colombia $1M que acertó el marcador exacto.
  */
 async function enviarCorreoBonoColWinner({ destinatario, nombre, partido, monto }) {
     const transporter = crearTransporter();
