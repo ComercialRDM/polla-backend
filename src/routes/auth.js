@@ -6,6 +6,8 @@ const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
 const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
 const { enviarCorreoResetPassword } = require('../services/emailService');
+const adminAuth = require('../middleware/adminAuth');
+const { otpLimiter } = require('../middleware/rateLimiters');
 
 const router = express.Router();
 
@@ -149,7 +151,7 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/telefono/solicitar-codigo - manda el código de verificación por SMS
 // vía Twilio Verify, para "Continuar con teléfono" (login/registro sin contraseña)
-router.post('/telefono/solicitar-codigo', async (req, res) => {
+router.post('/telefono/solicitar-codigo', otpLimiter, async (req, res) => {
     const celularNormalizado = normalizarCelular(req.body.celular);
 
     if (!celularNormalizado || celularNormalizado.length < 7) {
@@ -369,19 +371,20 @@ router.post('/restablecer-password', async (req, res) => {
 });
 
 // GET /api/auth/google/diagnostico - verifica que GOOGLE_CLIENT_ID esté bien configurado
-router.get('/google/diagnostico', (req, res) => {
+// Protegido con adminAuth: expone prefijos de credenciales, no debe ser público.
+router.get('/google/diagnostico', adminAuth, (req, res) => {
     const id = process.env.GOOGLE_CLIENT_ID || '';
     res.json({ configurado: !!id, prefijo: id ? id.substring(0, 25) + '...' : '(vacío)' });
 });
 
 // GET /api/auth/manychat/diagnostico - verifica que MANYCHAT_API_KEY esté configurada
-router.get('/manychat/diagnostico', (req, res) => {
+router.get('/manychat/diagnostico', adminAuth, (req, res) => {
     const key = process.env.MANYCHAT_API_KEY || '';
     res.json({ configurado: !!key, prefijo: key ? key.substring(0, 10) + '...' : '(vacío)' });
 });
 
 // GET /api/auth/smtp/diagnostico - verifica configuración SMTP
-router.get('/smtp/diagnostico', (req, res) => {
+router.get('/smtp/diagnostico', adminAuth, (req, res) => {
     res.json({
         SMTP_HOST: process.env.SMTP_HOST || '(vacío)',
         SMTP_PORT: process.env.SMTP_PORT || '(vacío)',

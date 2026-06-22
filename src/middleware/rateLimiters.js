@@ -51,4 +51,27 @@ const votarLimiter = rateLimit({
     message: { success: false, error: 'Demasiados intentos de votación. Espera unos minutos e inténtalo de nuevo.' },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter };
+// Límite estricto y por número de destino para el envío de OTP por SMS (Twilio,
+// tiene costo monetario real por mensaje). Evita "SMS bombing" hacia un celular
+// arbitrario reutilizando /api/auth/telefono/solicitar-codigo en bucle.
+const otpLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiados códigos solicitados. Espera una hora e inténtalo de nuevo.' },
+    keyGenerator: (req) => (req.body?.celular ? `otp:${req.body.celular}` : req.ip),
+});
+
+// Límite genérico para webhooks externos (Wompi, ManyChat, proveedor de marcadores
+// en vivo). No reemplaza la validación de firma/secreto, solo evita fuerza bruta
+// del secreto y picos de tráfico no esperados.
+const webhooksLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiadas solicitudes.' },
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter };

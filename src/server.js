@@ -17,7 +17,7 @@ const simuladorRouter = require('./routes/simulador');
 const localRouter = require('./routes/local');
 const partidosRouter  = require('./routes/partidos');
 const passkeysRouter  = require('./routes/passkeys');
-const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter } = require('./middleware/rateLimiters');
+const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
@@ -35,7 +35,7 @@ const origenesPermitidos = (process.env.FRONTEND_URL || '')
     .filter(Boolean);
 
 if (origenesPermitidos.length === 0) {
-    console.warn('FRONTEND_URL no está configurado: CORS permitirá cualquier origen.');
+    console.warn('FRONTEND_URL no está configurado: CORS solo permitirá localhost (desarrollo).');
 }
 
 // CSP no aplica a una API que solo devuelve JSON/imágenes; se desactiva para evitar
@@ -47,7 +47,7 @@ app.use(helmet({
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
-            imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+            imgSrc: ["'self'", 'data:', 'blob:'],
             connectSrc: ["'self'", 'https://api.manychat.com', 'https://sandbox.wompi.co', 'https://production.wompi.co'],
             fontSrc: ["'self'", 'https:', 'data:'],
             frameSrc: ["'none'"],
@@ -58,7 +58,7 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
 }));
 app.use(cors({
-    origin: origenesPermitidos.length > 0 ? origenesPermitidos : true,
+    origin: origenesPermitidos.length > 0 ? origenesPermitidos : ['http://localhost:5173'],
 }));
 app.use(express.json({ limit: '2mb' }));
 
@@ -67,14 +67,14 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/transacciones', transaccionesLimiter, transaccionesRouter);
-app.use('/api/webhooks', webhooksRouter);
+app.use('/api/webhooks', webhooksLimiter, webhooksRouter);
 app.use('/api/polla', pollaLimiter, pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/local', adminLimiter, localRouter);
 app.use('/api/partidos', pollaLimiter, partidosRouter);
-app.use('/api/passkey', passkeysRouter);
+app.use('/api/passkey', authLimiter, passkeysRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {

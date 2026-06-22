@@ -89,11 +89,12 @@ router.post('/wompi', async (req, res) => {
 // Recibe los eventos en tiempo real de una API deportiva (ej. API-Football) con el formato:
 // { fixture: { id, status }, teams: { home: { name }, away: { name } }, goals: { home, away } }
 router.post('/partido-en-vivo', async (req, res) => {
-    if (FUTBOL_WEBHOOK_SECRET) {
-        const secretRecibido = req.headers['x-webhook-secret'];
-        if (!compararSeguro(secretRecibido, FUTBOL_WEBHOOK_SECRET)) {
-            return res.status(401).json({ success: false, error: 'No autorizado' });
-        }
+    if (!FUTBOL_WEBHOOK_SECRET) {
+        return res.status(503).json({ success: false, error: 'Webhook no configurado' });
+    }
+    const secretRecibido = req.headers['x-webhook-secret'];
+    if (!compararSeguro(secretRecibido, FUTBOL_WEBHOOK_SECRET)) {
+        return res.status(401).json({ success: false, error: 'No autorizado' });
     }
 
     try {
@@ -155,11 +156,12 @@ router.post('/partido-en-vivo', async (req, res) => {
 // ManyChat), separado de las rutas /api/admin (protegidas por RBAC).
 // Body: { fecha: "YYYY-MM-DD", mensajes_enviados, aperturas, clics }
 router.post('/manychat-metricas', async (req, res) => {
-    if (MANYCHAT_METRICAS_SECRET) {
-        const secretRecibido = req.headers['x-webhook-secret'];
-        if (!compararSeguro(secretRecibido, MANYCHAT_METRICAS_SECRET)) {
-            return res.status(401).json({ success: false, error: 'No autorizado' });
-        }
+    if (!MANYCHAT_METRICAS_SECRET) {
+        return res.status(503).json({ success: false, error: 'Webhook no configurado' });
+    }
+    const secretRecibido = req.headers['x-webhook-secret'];
+    if (!compararSeguro(secretRecibido, MANYCHAT_METRICAS_SECRET)) {
+        return res.status(401).json({ success: false, error: 'No autorizado' });
     }
 
     const { fecha, mensajes_enviados, aperturas, clics } = req.body || {};

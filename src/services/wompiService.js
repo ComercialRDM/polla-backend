@@ -9,7 +9,7 @@ const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET;
  * Crea un Payment Link dinámico de un solo uso en Wompi.
  * El amount_in_cents queda fijo, así el cliente no puede alterar el valor.
  */
-async function crearPaymentLink({ name, description, amountInCents, reference, redirectUrl, expiresAt }) {
+async function crearPaymentLink({ name, description, amountInCents, reference, redirectUrl, expiresAt, customerData }) {
     const body = {
         name,
         description,
@@ -23,6 +23,17 @@ async function crearPaymentLink({ name, description, amountInCents, reference, r
 
     if (expiresAt) {
         body.expires_at = expiresAt;
+    }
+
+    // Pre-llena nombre/correo/celular en el Web Checkout de Wompi para que el
+    // comprador no tenga que volver a escribirlos (ya los dio en Comprar.jsx).
+    if (customerData) {
+        body.customer_data = {
+            email: customerData.email,
+            full_name: customerData.fullName,
+            phone_number: customerData.phoneNumber,
+            phone_number_prefix: '+57',
+        };
     }
 
     const response = await axios.post(`${WOMPI_API_URL}/payment_links`, body, {
