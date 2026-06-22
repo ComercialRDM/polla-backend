@@ -8,6 +8,7 @@ const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
 const { votarLimiter } = require('../middleware/rateLimiters');
+const usuarioAuth = require('../middleware/usuarioAuth');
 
 const router = express.Router();
 
@@ -456,10 +457,12 @@ router.post('/registrar-compartida', async (req, res) => {
     }
 });
 
-// GET /api/polla/resumen-usuario?usuario_id= - estadísticas personales del usuario
-router.get('/resumen-usuario', async (req, res) => {
-    const usuario_id = parseInt(req.query.usuario_id);
-    if (!usuario_id) return res.status(400).json({ success: false, error: 'Falta usuario_id' });
+// GET /api/polla/resumen-usuario - estadísticas personales del usuario autenticado
+// (antes aceptaba ?usuario_id= libremente: cualquiera podía ver los datos y el
+// token_polla de cualquier otro usuario adivinando su id. Ahora el id se resuelve
+// del token de sesión, nunca del que mande el cliente.)
+router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
+    const usuario_id = req.usuario.id;
 
     try {
         // Intentos pagados (cupos de transacciones)
@@ -653,10 +656,9 @@ router.get('/resumen-usuario', async (req, res) => {
     }
 });
 
-// GET /api/polla/mis-pronosticos?usuario_id= - historial de pronósticos del usuario con resultados
-router.get('/mis-pronosticos', async (req, res) => {
-    const usuario_id = parseInt(req.query.usuario_id);
-    if (!usuario_id) return res.status(400).json({ success: false, error: 'Falta usuario_id' });
+// GET /api/polla/mis-pronosticos - historial de pronósticos del usuario autenticado
+router.get('/mis-pronosticos', usuarioAuth, async (req, res) => {
+    const usuario_id = req.usuario.id;
 
     try {
         const { rows } = await pool.query(

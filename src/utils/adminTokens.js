@@ -21,12 +21,13 @@ function firmar(data) {
 /**
  * Genera un token de sesión firmado. El rol queda explícito en el payload
  * para que cada middleware (RBAC) lo verifique: "ADMIN" para admin_usuarios,
- * "LOCAL" para local_usuarios (cuentas de redención de bonos por local).
- * @param {{ id: number, usuario: string, role?: string }} datos
+ * "LOCAL" para local_usuarios (cuentas de redención de bonos por local),
+ * "USUARIO" para clientes finales (ver src/utils/userTokens.js).
+ * @param {{ id: number, usuario: string, role?: string, vigenciaSeg?: number }} datos
  * @returns {string}
  */
-function generarToken({ id, usuario, role = 'ADMIN' }) {
-    const payload = JSON.stringify({ id, usuario, role, exp: Math.floor(Date.now() / 1000) + TOKEN_VIGENCIA_SEG });
+function generarToken({ id, usuario, role = 'ADMIN', vigenciaSeg = TOKEN_VIGENCIA_SEG }) {
+    const payload = JSON.stringify({ id, usuario, role, exp: Math.floor(Date.now() / 1000) + vigenciaSeg });
     const payloadB64 = base64url(payload);
     return `${payloadB64}.${firmar(payloadB64)}`;
 }

@@ -8,6 +8,7 @@ const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twili
 const { enviarCorreoResetPassword } = require('../services/emailService');
 const adminAuth = require('../middleware/adminAuth');
 const { otpLimiter } = require('../middleware/rateLimiters');
+const { generarTokenUsuario } = require('../utils/userTokens');
 
 const router = express.Router();
 
@@ -106,7 +107,7 @@ router.post('/registro', async (req, res) => {
             usuario = rows[0];
         }
 
-        return res.json({ success: true, usuario });
+        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('Error en /auth/registro:', err);
         if (err.code === '23505') {
@@ -142,7 +143,7 @@ router.post('/login', async (req, res) => {
         }
 
         const { password_hash, ...usuario } = rows[0];
-        return res.json({ success: true, usuario });
+        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('Error en /auth/login:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
@@ -190,7 +191,7 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
         );
 
         if (usuarioRows.length > 0) {
-            return res.json({ success: true, usuario: usuarioRows[0] });
+            return res.json({ success: true, usuario: usuarioRows[0], token: generarTokenUsuario(usuarioRows[0]) });
         }
 
         const registroToken = crypto.randomUUID();
@@ -247,7 +248,7 @@ router.post('/telefono/completar', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return res.json({ success: true, usuario: nuevoUsuario[0] });
+        return res.json({ success: true, usuario: nuevoUsuario[0], token: generarTokenUsuario(nuevoUsuario[0]) });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error en /auth/telefono/completar:', err.message);
@@ -416,7 +417,7 @@ router.post('/google', async (req, res) => {
             [googleId]
         );
         if (porGoogleId.length > 0) {
-            return res.json({ success: true, usuario: porGoogleId[0] });
+            return res.json({ success: true, usuario: porGoogleId[0], token: generarTokenUsuario(porGoogleId[0]) });
         }
 
         // Si ya existe una cuenta con ese correo verificado, se vincula a la cuenta de Google
@@ -427,7 +428,7 @@ router.post('/google', async (req, res) => {
             );
             if (porCorreo.length > 0) {
                 await pool.query('UPDATE usuarios SET google_id = $1 WHERE id = $2', [googleId, porCorreo[0].id]);
-                return res.json({ success: true, usuario: porCorreo[0] });
+                return res.json({ success: true, usuario: porCorreo[0], token: generarTokenUsuario(porCorreo[0]) });
             }
         }
 
@@ -495,7 +496,7 @@ router.post('/google/completar', async (req, res) => {
             usuario = rows[0];
         }
 
-        return res.json({ success: true, usuario });
+        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('Error en /auth/google/completar:', err);
         if (err.code === '23505') {

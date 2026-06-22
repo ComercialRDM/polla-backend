@@ -7,6 +7,7 @@ const {
     verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 const pool = require('../db');
+const { generarTokenUsuario } = require('../utils/userTokens');
 
 const router = express.Router();
 
@@ -214,14 +215,12 @@ router.post('/login-verificar', async (req, res) => {
             [verification.authenticationInfo.newCounter, pk.credential_id]
         );
 
-        return res.json({
-            success: true,
-            usuario: {
-                id: pk.uid, nombre: pk.nombre, celular: pk.celular,
-                correo: pk.correo, equipos_favoritos: pk.equipos_favoritos,
-                calendario_token: pk.calendario_token,
-            },
-        });
+        const usuario = {
+            id: pk.uid, nombre: pk.nombre, celular: pk.celular,
+            correo: pk.correo, equipos_favoritos: pk.equipos_favoritos,
+            calendario_token: pk.calendario_token,
+        };
+        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('login-verificar:', err.message);
         return res.status(400).json({ error: err.message });
