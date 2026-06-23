@@ -14,15 +14,19 @@ function crearTransporter() {
 
 /**
  * Envía el correo con el bono adjunto, intentos disponibles y link de acceso a la polla.
- * @param {{ destinatario: string, nombre: string, saldoBono: number, intentos: number, tokenAcceso: string, bonoBuffer: Buffer, esTest?: boolean }} datos
+ * @param {{ destinatario: string, nombre: string, saldoBono: number, intentos: number, tokenAcceso: string, bonoBuffer: Buffer, esTest?: boolean, esEspecial?: boolean }} datos
  */
-async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tokenAcceso, bonoBuffer, esTest }) {
+async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tokenAcceso, bonoBuffer, esTest, esEspecial }) {
     const transporter = crearTransporter();
     const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${tokenAcceso}`;
 
     const bannerTest = esTest
         ? `<div style="background: #fee2e2; color: #991b1b; font-weight: bold; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
                🧪 ESTE ES UN BONO DE PRUEBA — No representa dinero real y no es válido para redimir en tienda.
+           </div>`
+        : esEspecial
+        ? `<div style="background: #fef3c7; color: #92400e; font-weight: bold; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+               🎖️ BONO ESPECIAL — Gracias por ser creador de contenido de La Retoucherie. Este bono SÍ es válido para redimir en tienda.
            </div>`
         : '';
 
@@ -46,6 +50,8 @@ async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tok
         to: destinatario,
         subject: esTest
             ? '🧪 [PRUEBA] Tu Bono Digital y acceso a la Polla Mundialista'
+            : esEspecial
+            ? '🎖️ Tu Bono Especial de Creador de Contenido'
             : '¡Tu Bono Digital y acceso a la Polla Mundialista! 🇨🇴',
         html,
         attachments: [

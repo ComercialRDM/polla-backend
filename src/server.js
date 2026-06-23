@@ -324,6 +324,14 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de usuarios.es_test:', err.message);
     }
 
+    // Bonos Especiales para influenciadores/creadores de contenido: cupos +
+    // bono real, pero excluidos del ranking de premios y del Bono Colombia.
+    try {
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS es_especial BOOLEAN NOT NULL DEFAULT FALSE`);
+    } catch (err) {
+        console.error('Error aplicando migración de transacciones.es_especial:', err.message);
+    }
+
     try {
         await pool.query(`ALTER TABLE partidos ADD COLUMN IF NOT EXISTS fase TEXT NOT NULL DEFAULT 'grupos' CHECK (fase IN ('grupos','dieciseisavos','octavos','cuartos','semifinal','final'))`);
         await pool.query(`ALTER TABLE pronosticos ADD COLUMN IF NOT EXISTS cupos_costo INTEGER NOT NULL DEFAULT 1`);

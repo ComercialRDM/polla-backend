@@ -24,7 +24,7 @@ async function calcularRanking(partidoId, limit = 10) {
          FROM pronosticos p
          JOIN usuarios u ON u.id = p.usuario_id
          JOIN transacciones t ON t.id = p.transaccion_id
-         WHERE p.partido_id = $1 AND p.goles_local = $2 AND p.goles_visitante = $3 AND t.es_test = FALSE
+         WHERE p.partido_id = $1 AND p.goles_local = $2 AND p.goles_visitante = $3 AND t.es_test = FALSE AND t.es_especial = FALSE
          ORDER BY p.fecha_registro ASC
          LIMIT $4`,
         [partidoId, goles_local, goles_visitante, limit]
@@ -58,7 +58,7 @@ async function obtenerResumenPublico(partidoId) {
     if (partidoRows.length === 0) return null;
 
     const { rows: totalRows } = await pool.query(
-        `SELECT COUNT(*)::int AS total FROM transacciones WHERE partido_id = $1 AND estado_pago = 'APROBADO' AND es_test = FALSE`,
+        `SELECT COUNT(*)::int AS total FROM transacciones WHERE partido_id = $1 AND estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE`,
         [partidoId]
     );
 
@@ -68,7 +68,7 @@ async function obtenerResumenPublico(partidoId) {
          FROM pronosticos p
          JOIN usuarios u ON u.id = p.usuario_id
          JOIN transacciones t ON t.id = p.transaccion_id
-         WHERE p.partido_id = $1 AND p.goles_local = $2 AND p.goles_visitante = $3 AND t.es_test = FALSE
+         WHERE p.partido_id = $1 AND p.goles_local = $2 AND p.goles_visitante = $3 AND t.es_test = FALSE AND t.es_especial = FALSE
          ORDER BY p.fecha_registro ASC
          LIMIT 3`,
         [partidoId, goles_local, goles_visitante]
@@ -94,7 +94,7 @@ async function obtenerPronosticosPublicos(partidoId, limit = 50) {
          FROM pronosticos p
          JOIN usuarios u ON u.id = p.usuario_id
          JOIN transacciones t ON t.id = p.transaccion_id
-         WHERE p.partido_id = $1 AND t.es_test = FALSE
+         WHERE p.partido_id = $1 AND t.es_test = FALSE AND t.es_especial = FALSE
          ORDER BY p.fecha_registro DESC
          LIMIT $2`,
         [partidoId, limit]

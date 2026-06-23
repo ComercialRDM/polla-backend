@@ -40,10 +40,10 @@ async function asegurarTemplate() {
 /**
  * Genera la imagen del bono (PNG) con el valor, el nombre del cliente y un código QR
  * (token de acceso) incrustados. El QR lo escanea el local para marcar el bono como usado.
- * @param {{ nombre: string, saldoBono: number, tokenAcceso: string, esTest?: boolean }} datos
+ * @param {{ nombre: string, saldoBono: number, tokenAcceso: string, esTest?: boolean, esEspecial?: boolean }} datos
  * @returns {Promise<Buffer>}
  */
-async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
+async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest, esEspecial }) {
     await asegurarTemplate();
 
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
@@ -60,6 +60,11 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest }) {
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
             <rect x="${ANCHO / 2 - 520}" y="${ALTO / 2 - 70}" width="1040" height="140" fill="#dc2626" opacity="0.85"/>
             <text x="${ANCHO / 2}" y="${ALTO / 2 + 30}" font-family="Arial" font-size="90" font-weight="bold" fill="#ffffff" text-anchor="middle">PRUEBA - NO VÁLIDO</text>
+        </g>` : ''}
+        ${esEspecial ? `
+        <g transform="rotate(-8 250 90)">
+            <rect x="40" y="50" width="420" height="80" rx="14" fill="#FCD116" stroke="#1a1a1a" stroke-width="3"/>
+            <text x="250" y="102" font-family="Arial" font-size="40" font-weight="bold" fill="#1a1a1a" text-anchor="middle">🎖️ BONO ESPECIAL</text>
         </g>` : ''}
     </svg>`;
 

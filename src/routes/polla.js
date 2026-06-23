@@ -30,7 +30,7 @@ router.get('/bono/:token', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.saldo_bono, t.es_test, u.nombre
+            `SELECT t.saldo_bono, t.es_test, t.es_especial, u.nombre
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -42,12 +42,12 @@ router.get('/bono/:token', async (req, res) => {
             return res.status(404).send('Bono no encontrado');
         }
 
-        const { nombre, saldo_bono, es_test } = rows[0];
+        const { nombre, saldo_bono, es_test, es_especial } = rows[0];
 
         // El bono no cambia una vez aprobada la transacción: se cachea para evitar
         // regenerar la imagen (operación costosa con sharp) en cada visualización.
         const bonoBuffer = await getOrSet(`bono:${token}`, 24 * 60 * 60 * 1000, () =>
-            generarImagenBono({ nombre, saldoBono: saldo_bono, tokenAcceso: token, esTest: es_test })
+            generarImagenBono({ nombre, saldoBono: saldo_bono, tokenAcceso: token, esTest: es_test, esEspecial: es_especial })
         );
 
         res.set('Content-Type', 'image/png');
@@ -133,7 +133,7 @@ router.get('/info', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.usuario_id, u.nombre, u.equipos_favoritos, u.calendario_token
+            `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -145,7 +145,7 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, nombre, equipos_favoritos, calendario_token } = rows[0];
+        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -177,6 +177,7 @@ router.get('/info', async (req, res) => {
         return res.json({
             acceso: true,
             nombre,
+            es_especial,
             equipos_favoritos: equipos_favoritos || [],
             calendario_token,
             cupos_totales: saldo.cuposTotales,

@@ -9,6 +9,7 @@ const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
+const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion } = require('../services/especialesService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
@@ -312,13 +313,19 @@ router.patch('/partidos/:id', async (req, res) => {
             partido.goles_visitante !== null &&
             (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia')
         ) {
+            // LEFT JOIN (no INNER) a propósito: los pronósticos "flash" (promoción sin
+            // bono) tienen transaccion_id NULL y deben seguir contando. Solo se excluyen
+            // los que sí están ligados a una transacción de prueba o Bono Especial.
             const { rows: exactos } = await client.query(
                 `SELECT pr.usuario_id, u.nombre, u.correo, u.celular
                  FROM pronosticos pr
                  JOIN usuarios u ON u.id = pr.usuario_id
+                 LEFT JOIN transacciones t ON t.id = pr.transaccion_id
                  WHERE pr.partido_id = $1
                    AND pr.goles_local = $2
-                   AND pr.goles_visitante = $3`,
+                   AND pr.goles_visitante = $3
+                   AND COALESCE(t.es_test, FALSE) = FALSE
+                   AND COALESCE(t.es_especial, FALSE) = FALSE`,
                 [id, partido.goles_local, partido.goles_visitante]
             );
             if (exactos.length > 0) {
@@ -515,6 +522,51 @@ router.delete('/test/limpiar', async (req, res) => {
     } catch (err) {
         console.error('Error en /admin/test/limpiar:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/especiales/crear
+// Crea Bonos Especiales (es_especial = TRUE) para influenciadores/creadores
+// de contenido: cupos para predecir + bono REAL de servicios (válido en
+// tienda), pero excluidos del ranking de premios y del Bono Colombia.
+// Body: { personas: [{ nombre, celular, correo? }], valorBono?, intentos? }
+router.post('/especiales/crear', async (req, res) => {
+    const { personas, valorBono, intentos } = req.body;
+
+    if (!Array.isArray(personas) || personas.length === 0) {
+        return res.status(400).json({ success: false, error: 'Falta el campo personas (array)' });
+    }
+
+    try {
+        const resultado = await crearBonosEspeciales({ personas, valorBono, intentos });
+        return res.json({ success: true, ...resultado });
+    } catch (err) {
+        console.error('Error en /admin/especiales/crear:', err);
+        return res.status(500).json({ success: false, error: err.message || 'Error interno' });
+    }
+});
+
+// GET /api/admin/especiales - lista los Bonos Especiales ya creados
+router.get('/especiales', async (req, res) => {
+    try {
+        const bonos = await listarBonosEspeciales();
+        return res.json({ success: true, bonos });
+    } catch (err) {
+        console.error('Error en /admin/especiales:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/especiales/:id/invitar
+// Envía por WhatsApp el mensaje de invitación a difundir el concurso (pasos
+// para participar, beneficios de La Retoucherie y su link de referido).
+router.post('/especiales/:id/invitar', async (req, res) => {
+    try {
+        const resultado = await enviarInvitacionDifusion(Number(req.params.id));
+        return res.json({ success: true, ...resultado });
+    } catch (err) {
+        console.error('Error en /admin/especiales/:id/invitar:', err);
+        return res.status(500).json({ success: false, error: err.message || 'Error interno' });
     }
 });
 

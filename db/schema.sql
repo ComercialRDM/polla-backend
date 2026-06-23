@@ -115,6 +115,12 @@ ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido_en TIMESTAMPTZ
 -- reportes, rankings y listas públicas, y se identifican en el bono/correo/WhatsApp.
 ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS es_test BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Bonos Especiales para influenciadores/creadores de contenido: igual que un
+-- bono real (saldo_bono + intentos) pero sin dinero real. Se excluyen del
+-- ranking de premios y del Bono Colombia, pero a diferencia de es_test NO se
+-- borran con la limpieza de transacciones de prueba (son permanentes).
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS es_especial BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- ============================================================
 -- Tabla: pronosticos
 -- ============================================================
