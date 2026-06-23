@@ -169,7 +169,7 @@ async function enviarInvitacionDifusion(transaccionId) {
         + `2️⃣ Predicen el marcador del próximo partido de Colombia\n`
         + `3️⃣ Compran su Bono Digital (desde $10.000): incluye crédito real en La Retoucherie para arreglos y transformaciones de ropa + cupos para predecir\n`
         + `4️⃣ ¡Pueden ganar hasta $1.000.000 en el Bono Colombia si aciertan el marcador exacto!\n\n`
-        + `✂️ La Retoucherie de Manuela arregla y transforma ropa a la medida (dobladillos, ajustes, transformaciones) en Barranquilla y Cartagena.\n\n`
+        + `✂️ La Retoucherie de Manuela arregla y transforma ropa a la medida (dobladillos, ajustes, transformaciones) en Barranquilla.\n\n`
         + `🎁 Como creador de contenido ya tienes tu Bono Especial de $${saldo_bono.toLocaleString('es-CO')} en arreglos de ropa, ¡totalmente real y listo para usar en tienda!\n\n`
         + `👉 Tu link personal (para que rastreemos a quienes invites): ${linkReferido}`;
 
