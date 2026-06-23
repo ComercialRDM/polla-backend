@@ -329,10 +329,18 @@ router.patch('/partidos/:id', async (req, res) => {
                 [id, partido.goles_local, partido.goles_visitante]
             );
             if (exactos.length > 0) {
-                const montoPorGanador = Math.floor(1000000 / exactos.length);
+                // Si hay más de 10 acertantes exactos, se sortea entre todos ellos
+                // y solo 10 se llevan el Bono Colombia ($100.000 cada uno = $1.000.000
+                // en total). Con 10 o menos acertantes, el millón se divide en
+                // partes iguales entre todos (sin sorteo).
+                const sorteoRealizado = exactos.length > 10;
+                const ganadoresElegidos = sorteoRealizado
+                    ? [...exactos].sort(() => Math.random() - 0.5).slice(0, 10)
+                    : exactos;
+                const montoPorGanador = sorteoRealizado ? 100000 : Math.floor(1000000 / exactos.length);
                 const nombrePartido = `${partido.equipo_local} ${partido.goles_local} - ${partido.goles_visitante} ${partido.equipo_visitante}`;
                 const ganadoresNuevos = [];
-                for (const g of exactos) {
+                for (const g of ganadoresElegidos) {
                     const { rows: insertado } = await client.query(
                         `INSERT INTO bonos_colombia (partido_id, usuario_id, monto_cop)
                          VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING
@@ -354,10 +362,12 @@ router.patch('/partidos/:id', async (req, res) => {
                     }
                 }
                 bonoColombia = {
-                    ganadores: exactos.map((g) => ({ nombre: g.nombre, celular: g.celular })),
+                    ganadores: ganadoresElegidos.map((g) => ({ nombre: g.nombre, celular: g.celular })),
                     nuevos: ganadoresNuevos.length,
                     montoPorGanador,
-                    totalDistribuido: montoPorGanador * exactos.length,
+                    totalDistribuido: montoPorGanador * ganadoresElegidos.length,
+                    sorteoRealizado,
+                    totalAcertantes: exactos.length,
                 };
             } else {
                 bonoColombia = { ganadores: [], desierto: true };
