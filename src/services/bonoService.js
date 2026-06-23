@@ -26,6 +26,20 @@ const COORD = {
 // (medido con sharp: x 928-1118, y 290-485)
 const QR = { x: 936, y: 298, size: 174, padding: 8 };
 
+// La plantilla trae impreso de fábrica "...nuestras sedes en Barranquilla y
+// Cartagena" en el cartel amarillo (ya no abrimos en Cartagena). Como es arte
+// fijo del PNG, se tapa solo la segunda línea ("Barranquilla y Cartagena",
+// medida con sharp: banda de texto y 775-792 dentro del cartel x 269-942) con
+// un rectángulo del mismo amarillo y se reescribe solo "Barranquilla".
+const SEDES_COBERTURA = { x: 269, y: 772, width: 674, height: 26, fill: '#F5BB00' };
+const SEDES_TEXTO = { x: 606, y: 791, fontSize: 26, color: '#1a1a1a' };
+
+// Lo mismo pasa con el pie de página inferior ("*Válido hasta... / sedes en
+// barranquilla y cartagena"): se tapa la línea completa y se reescribe sin
+// Cartagena (medida con sharp: banda x 190-1015, y 867-890).
+const FOOTER_COBERTURA = { x: 190, y: 867, width: 825, height: 23, fill: '#F5BB00' };
+const FOOTER_TEXTO = { x: 602, y: 884, fontSize: 17, color: '#1a1a1a' };
+
 /**
  * Genera (si no existe) un template placeholder para el bono.
  */
@@ -71,6 +85,10 @@ async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, 
     <svg width="${ANCHO}" height="${ALTO}" xmlns="http://www.w3.org/2000/svg">
         <text x="${COORD.valor.x}" y="${COORD.valor.y}" font-family="Georgia, 'Times New Roman', serif" font-size="${COORD.valor.fontSize}" font-weight="bold" fill="${COORD.valor.color}" text-anchor="middle">${valorFormateado}</text>
         ${valorPagadoSvg}
+        <rect x="${SEDES_COBERTURA.x}" y="${SEDES_COBERTURA.y}" width="${SEDES_COBERTURA.width}" height="${SEDES_COBERTURA.height}" fill="${SEDES_COBERTURA.fill}"/>
+        <text x="${SEDES_TEXTO.x}" y="${SEDES_TEXTO.y}" font-family="Arial" font-size="${SEDES_TEXTO.fontSize}" font-weight="bold" fill="${SEDES_TEXTO.color}" text-anchor="middle">Barranquilla</text>
+        <rect x="${FOOTER_COBERTURA.x}" y="${FOOTER_COBERTURA.y}" width="${FOOTER_COBERTURA.width}" height="${FOOTER_COBERTURA.height}" fill="${FOOTER_COBERTURA.fill}"/>
+        <text x="${FOOTER_TEXTO.x}" y="${FOOTER_TEXTO.y}" font-family="Arial" font-size="${FOOTER_TEXTO.fontSize}" fill="${FOOTER_TEXTO.color}" text-anchor="middle">*Válido hasta el 1 de Marzo de 2027 / sedes en barranquilla</text>
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="start">${escapeXml(nombre)}</text>
         ${esTest ? `
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
