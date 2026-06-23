@@ -79,6 +79,7 @@ async function crearBonosEspeciales({ personas, valorBono = VALOR_BONO_ESPECIAL_
                     const bonoBuffer = await generarImagenBono({
                         nombre: usuario.nombre,
                         saldoBono: transaccion.saldo_bono,
+                        valorPagado: transaccion.valor_pagado,
                         tokenAcceso: transaccion.token_acceso,
                         esEspecial: true,
                     });

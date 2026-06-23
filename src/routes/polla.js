@@ -30,7 +30,7 @@ router.get('/bono/:token', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.saldo_bono, t.es_test, t.es_especial, u.nombre
+            `SELECT t.saldo_bono, t.valor_pagado, t.es_test, t.es_especial, u.nombre
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -42,12 +42,12 @@ router.get('/bono/:token', async (req, res) => {
             return res.status(404).send('Bono no encontrado');
         }
 
-        const { nombre, saldo_bono, es_test, es_especial } = rows[0];
+        const { nombre, saldo_bono, valor_pagado, es_test, es_especial } = rows[0];
 
         // El bono no cambia una vez aprobada la transacción: se cachea para evitar
         // regenerar la imagen (operación costosa con sharp) en cada visualización.
         const bonoBuffer = await getOrSet(`bono:${token}`, 24 * 60 * 60 * 1000, () =>
-            generarImagenBono({ nombre, saldoBono: saldo_bono, tokenAcceso: token, esTest: es_test, esEspecial: es_especial })
+            generarImagenBono({ nombre, saldoBono: saldo_bono, valorPagado: valor_pagado, tokenAcceso: token, esTest: es_test, esEspecial: es_especial })
         );
 
         res.set('Content-Type', 'image/png');

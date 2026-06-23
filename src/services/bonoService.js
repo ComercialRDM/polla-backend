@@ -15,6 +15,11 @@ const COORD = {
     valor:  { x: 650, y: 452, fontSize: 88, color: '#ffffff' },
     // Nombre: alineado a la izquierda (anchor=start) justo después del "PARA:" impreso
     nombre: { x: 395, y: 830, fontSize: 38, color: '#1a1a1a' },
+    // Valor pagado: debajo del valor recibido (mismo x, centrado), por debajo del
+    // texto fijo "en servicios" que ya imprime la plantilla, en letra pequeña
+    // (similar al nombre) para que el cliente note el extra que recibe.
+    valorPagadoNumeros: { x: 650, y: 590, fontSize: 32, color: '#ffffff' },
+    valorPagadoLetras:  { x: 650, y: 624, fontSize: 22, color: '#ffffff' },
 };
 
 // Código QR: centrado dentro del recuadro blanco vacío impreso en la plantilla
@@ -41,10 +46,10 @@ async function asegurarTemplate() {
 /**
  * Genera la imagen del bono (PNG) con el valor, el nombre del cliente y un código QR
  * (token de acceso) incrustados. El QR lo escanea el local para marcar el bono como usado.
- * @param {{ nombre: string, saldoBono: number, tokenAcceso: string, esTest?: boolean, esEspecial?: boolean }} datos
+ * @param {{ nombre: string, saldoBono: number, valorPagado?: number, tokenAcceso: string, esTest?: boolean, esEspecial?: boolean }} datos
  * @returns {Promise<Buffer>}
  */
-async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest, esEspecial }) {
+async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, esTest, esEspecial }) {
     await asegurarTemplate();
 
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
@@ -53,9 +58,19 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest, esEsp
     // Reduce el tamaño de letra del nombre según longitud (alineado a la izquierda desde x:335)
     const nombreFontSize = nombre.length > 30 ? 28 : nombre.length > 22 ? 34 : COORD.nombre.fontSize;
 
+    // "Valor pagado" debajo del valor recibido, en números y en letras, para que el
+    // cliente note el extra que le estamos dando sobre lo que pagó. Solo se imprime
+    // si se conoce el valor pagado (siempre debería conocerse, pero por seguridad
+    // se omite si no llega).
+    const valorPagadoSvg = (valorPagado != null) ? `
+        <text x="${COORD.valorPagadoNumeros.x}" y="${COORD.valorPagadoNumeros.y}" font-family="Arial" font-size="${COORD.valorPagadoNumeros.fontSize}" font-weight="bold" fill="${COORD.valorPagadoNumeros.color}" text-anchor="middle">Valor pagado: $${valorPagado.toLocaleString('es-CO')}</text>
+        <text x="${COORD.valorPagadoLetras.x}" y="${COORD.valorPagadoLetras.y}" font-family="Arial" font-size="${COORD.valorPagadoLetras.fontSize}" fill="${COORD.valorPagadoLetras.color}" text-anchor="middle">(${capitalizar(numeroATexto(valorPagado))} pesos)</text>
+    ` : '';
+
     const overlaySvg = `
     <svg width="${ANCHO}" height="${ALTO}" xmlns="http://www.w3.org/2000/svg">
         <text x="${COORD.valor.x}" y="${COORD.valor.y}" font-family="Georgia, 'Times New Roman', serif" font-size="${COORD.valor.fontSize}" font-weight="bold" fill="${COORD.valor.color}" text-anchor="middle">${valorFormateado}</text>
+        ${valorPagadoSvg}
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="start">${escapeXml(nombre)}</text>
         ${esTest ? `
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
@@ -99,6 +114,62 @@ async function generarImagenBono({ nombre, saldoBono, tokenAcceso, esTest, esEsp
         .toBuffer();
 
     return buffer;
+}
+
+// --- Conversor de números a letras en español (para "Valor pagado" en el bono) ---
+const UNIDADES = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+const DIECIS = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve'];
+const VEINTIS = ['veinte', 'veintiuno', 'veintidós', 'veintitrés', 'veinticuatro', 'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho', 'veintinueve'];
+const DECENAS = ['', '', '', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+const CENTENAS = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+
+// Convierte 0-99 a texto. `apocope` cambia "uno"→"un" y "veintiuno"→"veintiún"
+// (se usa cuando el número antecede a "mil" o "millones").
+function decenasATexto(n, apocope) {
+    if (n < 10) return apocope && n === 1 ? 'un' : UNIDADES[n];
+    if (n < 20) return DIECIS[n - 10];
+    if (n < 30) return apocope && n === 21 ? 'veintiún' : VEINTIS[n - 20];
+    const d = Math.floor(n / 10);
+    const u = n % 10;
+    if (u === 0) return DECENAS[d];
+    return `${DECENAS[d]} y ${apocope && u === 1 ? 'un' : UNIDADES[u]}`;
+}
+
+// Convierte 0-999 a texto.
+function centenasATexto(n, apocope) {
+    if (n === 0) return '';
+    if (n === 100) return 'cien';
+    const c = Math.floor(n / 100);
+    const resto = n % 100;
+    const textoCentena = c > 0 ? CENTENAS[c] : '';
+    const textoResto = resto > 0 ? decenasATexto(resto, apocope) : '';
+    return [textoCentena, textoResto].filter(Boolean).join(' ');
+}
+
+// Convierte un entero no negativo (0 a 999.999.999) a su escritura en palabras.
+function numeroATexto(numero) {
+    const n = Math.round(Number(numero) || 0);
+    if (n === 0) return 'cero';
+
+    const millones = Math.floor(n / 1000000);
+    const miles = Math.floor((n % 1000000) / 1000);
+    const resto = n % 1000;
+
+    const partes = [];
+    if (millones > 0) {
+        partes.push(millones === 1 ? 'un millón' : `${centenasATexto(millones, true)} millones`);
+    }
+    if (miles > 0) {
+        partes.push(miles === 1 ? 'mil' : `${centenasATexto(miles, true)} mil`);
+    }
+    if (resto > 0) {
+        partes.push(centenasATexto(resto, false));
+    }
+    return partes.join(' ');
+}
+
+function capitalizar(texto) {
+    return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
 function escapeXml(text) {

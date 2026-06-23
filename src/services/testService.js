@@ -85,6 +85,7 @@ async function crearTransaccionesPrueba({ amigos, equipoA, equipoB }) {
                     const bonoBuffer = await generarImagenBono({
                         nombre: usuario.nombre,
                         saldoBono: transaccion.saldo_bono,
+                        valorPagado: transaccion.valor_pagado,
                         tokenAcceso: transaccion.token_acceso,
                         esTest: true,
                     });
