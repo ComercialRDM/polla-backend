@@ -997,6 +997,140 @@ router.get('/flash-ganadores', async (req, res) => {
     }
 });
 
+// GET /api/admin/ranking-final - calcula el podio final del torneo aplicando
+// los 3 criterios de desempate (puntaje total → puntaje en la Gran Final →
+// exactos en Semifinales) y resuelve empates de podio: si el grupo empatado
+// tiene 10 personas o menos, reparte el/los premios de las posiciones que
+// ocupa en partes iguales; si tiene más de 10, sortea 10 ganadores entre
+// ellos. Es de solo lectura — no inserta nada ni envía mensajes, para que el
+// Operador revise el resultado y notifique manualmente (igual que hoy).
+router.get('/ranking-final', async (req, res) => {
+    try {
+        const { rows: pozoRows } = await pool.query('SELECT primero, segundo, tercero FROM pozo_premios WHERE id = 1');
+        const base = pozoRows[0] || { primero: 2000000, segundo: 1000000, tercero: 500000 };
+        const PREMIOS = [Number(base.primero), Number(base.segundo), Number(base.tercero)];
+
+        const { rows } = await pool.query(
+            `SELECT u.id, u.nombre, u.celular, u.correo,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL
+                            THEN CASE pa.fase
+                                WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
+                                WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100 END
+                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                            THEN CASE pa.fase
+                                WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
+                                WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50 END
+                            ELSE 0
+                        END
+                    ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
+                    COUNT(CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1 END) AS exactos_total,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN pa.fase = 'final' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 2000
+                            WHEN pa.fase = 'final' AND pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                            THEN 1000
+                            ELSE 0
+                        END
+                    ), 0) AS puntos_final,
+                    COUNT(CASE WHEN pa.fase = 'semifinal' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1 END) AS exactos_semifinal
+             FROM usuarios u
+             LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+             LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+             WHERE u.es_test = FALSE
+               AND u.id NOT IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
+             GROUP BY u.id, u.nombre, u.celular, u.correo, u.puntos_bonus
+             HAVING COUNT(pr.id) > 0 OR COALESCE(u.puntos_bonus, 0) > 0`
+        );
+
+        const ordenados = rows
+            .map((u) => ({
+                id: u.id,
+                nombre: u.nombre,
+                celular: u.celular,
+                correo: u.correo,
+                puntos_total: Number(u.puntos_total),
+                puntos_final: Number(u.puntos_final),
+                exactos_semifinal: Number(u.exactos_semifinal),
+                exactos_total: Number(u.exactos_total),
+            }))
+            .sort((a, b) =>
+                b.puntos_total - a.puntos_total ||
+                b.puntos_final - a.puntos_final ||
+                b.exactos_semifinal - a.exactos_semifinal
+            );
+
+        // Agrupa usuarios consecutivos que empatan en los 3 criterios de desempate.
+        const bloques = [];
+        for (const u of ordenados) {
+            const ultimo = bloques[bloques.length - 1];
+            if (
+                ultimo &&
+                ultimo.usuarios[0].puntos_total === u.puntos_total &&
+                ultimo.usuarios[0].puntos_final === u.puntos_final &&
+                ultimo.usuarios[0].exactos_semifinal === u.exactos_semifinal
+            ) {
+                ultimo.usuarios.push(u);
+            } else {
+                bloques.push({ usuarios: [u] });
+            }
+        }
+
+        // Cada bloque ocupa tantas posiciones como usuarios tiene, en el orden en
+        // que aparecen. Solo importan las posiciones 1-3 (donde hay premio).
+        const podio = [];
+        let posicionActual = 1;
+        for (const bloque of bloques) {
+            const inicio = posicionActual;
+            const fin = posicionActual + bloque.usuarios.length - 1;
+            posicionActual = fin + 1;
+
+            const premiosDelBloque = [];
+            for (let pos = inicio; pos <= Math.min(fin, 3); pos++) premiosDelBloque.push(PREMIOS[pos - 1]);
+            if (premiosDelBloque.length === 0) break;
+
+            const premioTotal = premiosDelBloque.reduce((a, b) => a + b, 0);
+            const sorteoRealizado = bloque.usuarios.length > 10;
+            const ganadores = sorteoRealizado
+                ? [...bloque.usuarios].sort(() => Math.random() - 0.5).slice(0, 10)
+                : bloque.usuarios;
+            const montoPorGanador = Math.floor(premioTotal / ganadores.length);
+
+            podio.push({
+                puestos: inicio === fin ? `${inicio}°` : `${inicio}°-${fin}°`,
+                premio_total: premioTotal,
+                empatados: bloque.usuarios.length,
+                sorteo_realizado: sorteoRealizado,
+                monto_por_ganador: montoPorGanador,
+                ganadores: ganadores.map((g) => ({
+                    id: g.id, nombre: g.nombre, celular: g.celular, correo: g.correo,
+                    puntos_total: g.puntos_total, puntos_final: g.puntos_final, exactos_semifinal: g.exactos_semifinal,
+                })),
+                no_sorteados: sorteoRealizado
+                    ? bloque.usuarios.filter((u) => !ganadores.includes(u)).map((u) => ({ id: u.id, nombre: u.nombre }))
+                    : [],
+            });
+
+            if (fin >= 3) break;
+        }
+
+        return res.json({
+            success: true,
+            premios_base: { primero: PREMIOS[0], segundo: PREMIOS[1], tercero: PREMIOS[2] },
+            podio,
+            total_participantes: ordenados.length,
+        });
+    } catch (err) {
+        console.error('Error en GET /admin/ranking-final:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
 router.get('/bonos-colombia', async (req, res) => {
     try {
