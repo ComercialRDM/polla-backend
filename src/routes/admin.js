@@ -853,6 +853,69 @@ router.get('/ranking-global', async (req, res) => {
     }
 });
 
+// GET /api/admin/ranking-especiales - ranking SOLO entre cuentas de Bono
+// Especial (influenciadores/creadores de contenido), para que compitan entre
+// ellos sin mezclarse con el ranking de premios real. Misma fórmula de
+// puntaje que /ranking-global.
+router.get('/ranking-especiales', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT u.id, u.nombre, u.celular,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                 AND pa.goles_local IS NOT NULL
+                            THEN CASE pa.fase
+                                WHEN 'grupos'        THEN 100
+                                WHEN 'dieciseisavos' THEN 120
+                                WHEN 'octavos'       THEN 200
+                                WHEN 'cuartos'       THEN 250
+                                WHEN 'semifinal'     THEN 800
+                                WHEN 'final'         THEN 2000
+                                ELSE 100 END
+                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                            THEN CASE pa.fase
+                                WHEN 'grupos'        THEN 50
+                                WHEN 'dieciseisavos' THEN 60
+                                WHEN 'octavos'       THEN 100
+                                WHEN 'cuartos'       THEN 125
+                                WHEN 'semifinal'     THEN 400
+                                WHEN 'final'         THEN 1000
+                                ELSE 50 END
+                            ELSE 0
+                        END
+                    ), 0) AS puntos_total,
+                    COUNT(
+                        CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                                  AND pa.goles_local IS NOT NULL THEN 1 END
+                    ) AS exactos
+             FROM usuarios u
+             LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+             LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+             WHERE u.id IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
+             GROUP BY u.id, u.nombre, u.celular
+             ORDER BY puntos_total DESC, exactos DESC`
+        );
+
+        return res.json({
+            success: true,
+            ranking: rows.map((u, i) => ({
+                posicion: i + 1,
+                id: u.id,
+                nombre: u.nombre,
+                celular: u.celular,
+                puntos: Number(u.puntos_total),
+                exactos: Number(u.exactos),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en GET /admin/ranking-especiales:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
 router.get('/bonos-colombia', async (req, res) => {
     try {
