@@ -14,6 +14,13 @@ function tokenReferidoValido(ref) {
 
 const MIME_TYPES_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
+// Wompi rechaza un intento de pago si la reference ya fue usada en un intento anterior
+// (incluso si quedó abandonado o declinado), así que cada apertura del widget necesita
+// una reference nueva — aunque se reutilice la misma transacción PENDIENTE en DB.
+function generarReference(transaccionId) {
+    return `RET-${transaccionId}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
 // Resuelve el usuario de una compra sin fusionar por error a dos personas distintas.
 // `celular` es la clave de identidad confiable (UNIQUE NOT NULL en el esquema), así que
 // se busca primero por celular. Si no existe y el correo ya pertenece a OTRA cuenta con
@@ -102,20 +109,22 @@ router.post('/crear-link', async (req, res) => {
             [usuario.id, partido_id, Number(valor)]
         );
         if (pendienteExistente.length > 0) {
-            await client.query('ROLLBACK');
             const existente = pendienteExistente[0];
+            const referenceReintento = generarReference(existente.id);
+            await client.query('UPDATE transacciones SET reference = $1 WHERE id = $2', [referenceReintento, existente.id]);
+            await client.query('COMMIT');
             return res.json({
                 success: true,
                 widget: {
                     publicKey: WOMPI_PUBLIC_KEY,
                     currency: 'COP',
                     amountInCents,
-                    reference: existente.reference,
-                    signature: { integrity: generarFirmaIntegridad({ reference: existente.reference, amountInCents, currency: 'COP' }) },
+                    reference: referenceReintento,
+                    signature: { integrity: generarFirmaIntegridad({ reference: referenceReintento, amountInCents, currency: 'COP' }) },
                     redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${existente.token_acceso}`,
                     customerData: { email: correo, fullName: nombre, phoneNumber: celular, phoneNumberPrefix: '+57' },
                 },
-                reference: existente.reference,
+                reference: referenceReintento,
                 transaccion_id: existente.id,
             });
         }
@@ -131,7 +140,7 @@ router.post('/crear-link', async (req, res) => {
 
         // Construir reference y firma de integridad (Widget Checkout de Wompi, no Payment Links:
         // este sí soporta pre-llenar nombre/correo/celular del comprador vía customerData)
-        const reference = `RET-${transaccion.id}-${celular}`;
+        const reference = generarReference(transaccion.id);
         const signatureIntegrity = generarFirmaIntegridad({ reference, amountInCents, currency: 'COP' });
 
         await client.query('UPDATE transacciones SET reference = $1 WHERE id = $2', [reference, transaccion.id]);
