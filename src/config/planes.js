@@ -2,7 +2,7 @@
 const PLANES = {
     10000: { saldoBono: 15000, intentos: 1 },
     25000: { saldoBono: 40000, intentos: 2 },
-    50000: { saldoBono: 80000, intentos: 3 },
+    50000: { saldoBono: 80000, intentos: 5 },
 };
 
 // Usado solo para el monedero (dinero disponible informativo, ver walletService.js).
