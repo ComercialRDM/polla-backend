@@ -916,6 +916,77 @@ router.get('/ranking-especiales', async (req, res) => {
     }
 });
 
+// GET /api/admin/flash-ganadores - identifica el ganador de cada partido de la
+// promoción relámpago (pronosticos.es_flash = TRUE): el primero, por hora de
+// registro, cuyo pronóstico coincide con el marcador final. Solo se puede
+// determinar una vez el partido tiene marcador (estado 'cerrado').
+router.get('/flash-ganadores', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT p.id AS partido_id, p.equipo_local, p.equipo_visitante, p.fecha_hora_inicio,
+                    p.estado, p.goles_local, p.goles_visitante,
+                    pr.id AS pronostico_id, pr.goles_local AS pred_local, pr.goles_visitante AS pred_visitante, pr.created_at,
+                    u.id AS usuario_id, u.nombre, u.celular, u.correo
+             FROM pronosticos pr
+             JOIN partidos p ON p.id = pr.partido_id
+             JOIN usuarios u ON u.id = pr.usuario_id
+             WHERE pr.es_flash = TRUE
+             ORDER BY p.fecha_hora_inicio ASC, pr.created_at ASC`
+        );
+
+        const partidosMap = new Map();
+        for (const r of rows) {
+            if (!partidosMap.has(r.partido_id)) {
+                partidosMap.set(r.partido_id, {
+                    partido_id: r.partido_id,
+                    equipo_local: r.equipo_local,
+                    equipo_visitante: r.equipo_visitante,
+                    fecha_hora_inicio: r.fecha_hora_inicio,
+                    estado: r.estado,
+                    goles_local: r.goles_local,
+                    goles_visitante: r.goles_visitante,
+                    pronosticos: [],
+                });
+            }
+            partidosMap.get(r.partido_id).pronosticos.push({
+                pronostico_id: r.pronostico_id,
+                usuario_id: r.usuario_id,
+                nombre: r.nombre,
+                celular: r.celular,
+                correo: r.correo,
+                pred_local: r.pred_local,
+                pred_visitante: r.pred_visitante,
+                created_at: r.created_at,
+            });
+        }
+
+        // El array de pronósticos de cada partido ya viene ordenado por
+        // created_at ASC (orden de la consulta), así que el primer pronóstico
+        // que coincide con el marcador final es el ganador por orden de llegada.
+        const partidos = [...partidosMap.values()].map((p) => {
+            let ganador = null;
+            if (p.goles_local !== null && p.goles_visitante !== null) {
+                ganador = p.pronosticos.find(
+                    (pr) => pr.pred_local === p.goles_local && pr.pred_visitante === p.goles_visitante
+                ) || null;
+            }
+            return {
+                ...p,
+                ganador,
+                pronosticos: p.pronosticos.map((pr) => ({
+                    ...pr,
+                    es_ganador: !!ganador && ganador.pronostico_id === pr.pronostico_id,
+                })),
+            };
+        });
+
+        return res.json({ success: true, partidos });
+    } catch (err) {
+        console.error('Error en GET /admin/flash-ganadores:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/bonos-colombia - historial de ganadores del Bono Colombia
 router.get('/bonos-colombia', async (req, res) => {
     try {
