@@ -762,11 +762,11 @@ router.get('/pozo', async (req, res) => {
 
 // ── PROMOCIÓN RELÁMPAGO ──────────────────────────────────────────────────────
 // Partidos donde cualquier usuario registrado puede pronosticar sin bono,
-// con ventana de 60 minutos DESPUÉS del pitazo inicial.
+// con ventana de 30 minutos DESPUÉS del pitazo inicial.
 // Válido únicamente para las fechas y equipos indicados.
 const FLASH_PARTIDOS = [
-    { equipoLocal: 'Argentina', equipoVisitante: 'Argelia',  fecha: '2026-06-16', ventanaMin: 60 },
-    { equipoLocal: 'Austria',   equipoVisitante: 'Jordania', fecha: '2026-06-16', ventanaMin: 60 },
+    { equipoLocal: 'Argentina', equipoVisitante: 'Argelia',  fecha: '2026-06-16', ventanaMin: 30 },
+    { equipoLocal: 'Austria',   equipoVisitante: 'Jordania', fecha: '2026-06-16', ventanaMin: 30 },
 ];
 
 function buscarConfigFlash(partido) {
