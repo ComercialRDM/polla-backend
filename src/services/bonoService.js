@@ -12,13 +12,14 @@ const ALTO  = 896;
 // --- Coordenadas calibradas para la plantilla "Bono Digital" negra/amarilla ---
 // Valor numérico: va dentro del espacio "VÁLIDO POR $(  )" de la plantilla
 const COORD = {
-    valor:  { x: 490, y: 452, fontSize: 88, color: '#ffffff' },
+    valor:  { x: 650, y: 452, fontSize: 88, color: '#ffffff' },
     // Nombre: alineado a la izquierda (anchor=start) justo después del "PARA:" impreso
     nombre: { x: 395, y: 830, fontSize: 38, color: '#1a1a1a' },
 };
 
-// Código QR: 70% del tamaño anterior, centrado en la caja blanca de la plantilla
-const QR = { x: 830, y: 272, size: 215, padding: 10 };
+// Código QR: centrado dentro del recuadro blanco vacío impreso en la plantilla
+// (medido con sharp: x 928-1118, y 290-485)
+const QR = { x: 936, y: 298, size: 174, padding: 8 };
 
 /**
  * Genera (si no existe) un template placeholder para el bono.
