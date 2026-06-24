@@ -74,4 +74,16 @@ const webhooksLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes.' },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter };
+// Límite por número de celular (no solo por IP) para solicitar restablecer la
+// contraseña: evita que alguien bombardee el WhatsApp/correo de otra persona
+// con códigos de reset repetidos (acoso/spam), aunque no pueda adivinarlos.
+const resetPasswordLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiadas solicitudes de restablecimiento. Espera una hora e inténtalo de nuevo.' },
+    keyGenerator: (req) => (req.body?.celular ? `reset:${req.body.celular}` : req.ip),
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter };

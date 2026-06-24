@@ -7,7 +7,7 @@ const { enviarMensajeManyChat } = require('../services/manychatService');
 const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
 const { enviarCorreoResetPassword } = require('../services/emailService');
 const adminAuth = require('../middleware/adminAuth');
-const { otpLimiter } = require('../middleware/rateLimiters');
+const { otpLimiter, resetPasswordLimiter } = require('../middleware/rateLimiters');
 const { generarTokenUsuario } = require('../utils/userTokens');
 
 const router = express.Router();
@@ -262,7 +262,7 @@ router.post('/telefono/completar', async (req, res) => {
 });
 
 // POST /api/auth/solicitar-reset - genera un código OTP y lo envía por WhatsApp o correo
-router.post('/solicitar-reset', async (req, res) => {
+router.post('/solicitar-reset', resetPasswordLimiter, async (req, res) => {
     const { celular, metodo = 'whatsapp' } = req.body;
     const celularNormalizado = normalizarCelular(celular);
 
