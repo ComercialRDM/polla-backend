@@ -40,6 +40,15 @@ const SEDES_TEXTO = { x: 606, y: 791, fontSize: 26, color: '#1a1a1a' };
 const FOOTER_COBERTURA = { x: 190, y: 867, width: 825, height: 23, fill: '#F5BB00' };
 const FOOTER_TEXTO = { x: 602, y: 884, fontSize: 17, color: '#1a1a1a' };
 
+// Franja legal extra al final del bono (condiciones de canje). La plantilla
+// no trae espacio para esto, así que se alarga el lienzo hacia abajo
+// continuando el mismo amarillo del pie de página, en vez de apretar el
+// texto existente.
+const LEGAL_EXTRA_ALTO = 56;
+const LEGAL_FONDO = { r: 244, g: 188, b: 3, alpha: 1 };
+const LEGAL_LINEA_1 = { y: 22, fontSize: 16, texto: 'Bono no canjeable por efectivo · No transferible · Canje único.' };
+const LEGAL_LINEA_2 = { y: 42, fontSize: 16, texto: 'Vencido el plazo o redimido el saldo, el restante se pierde sin derecho a reclamo ni reactivación.' };
+
 /**
  * Genera (si no existe) un template placeholder para el bono.
  */
@@ -125,9 +134,23 @@ async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, 
         composite.push({ input: qrBuffer, top: QR.y + QR.padding, left: QR.x + QR.padding });
     }
 
-    const buffer = await sharp(TEMPLATE_PATH)
+    const baseBuffer = await sharp(TEMPLATE_PATH)
         .resize(ANCHO, ALTO)
         .composite(composite)
+        .png()
+        .toBuffer();
+
+    // Franja legal final: continúa el amarillo del pie de página hacia abajo
+    // para no apretar el texto existente ni tapar nada de la plantilla.
+    const legalSvg = `
+    <svg width="${ANCHO}" height="${LEGAL_EXTRA_ALTO}" xmlns="http://www.w3.org/2000/svg">
+        <text x="${ANCHO / 2}" y="${LEGAL_LINEA_1.y}" font-family="Arial" font-size="${LEGAL_LINEA_1.fontSize}" fill="#1a1a1a" text-anchor="middle">${LEGAL_LINEA_1.texto}</text>
+        <text x="${ANCHO / 2}" y="${LEGAL_LINEA_2.y}" font-family="Arial" font-size="${LEGAL_LINEA_2.fontSize}" fill="#1a1a1a" text-anchor="middle">${LEGAL_LINEA_2.texto}</text>
+    </svg>`;
+
+    const buffer = await sharp(baseBuffer)
+        .extend({ bottom: LEGAL_EXTRA_ALTO, background: LEGAL_FONDO })
+        .composite([{ input: Buffer.from(legalSvg), top: ALTO, left: 0 }])
         .png()
         .toBuffer();
 
