@@ -2,6 +2,7 @@ const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoManyChat } = require('./manychatService');
+const { registrarEvento } = require('./auditoriaService');
 
 /**
  * Aprueba una transacción de forma idempotente: solo actualiza si está PENDIENTE.
@@ -64,6 +65,48 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         const partido = partidoRows[0];
 
         await client.query('COMMIT');
+
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccion.id,
+            accion: 'aprobar_transaccion',
+            despues: { estado_pago: 'APROBADO', valor_pagado: transaccion.valor_pagado, influencer_id: transaccion.influencer_id },
+        });
+
+        // Comisión por venta atribuida a un influencer: idempotente por la
+        // UNIQUE(transaccion_id) en `comisiones` (ON CONFLICT DO NOTHING).
+        // Se calcula fuera de la transacción de aprobación a propósito: un
+        // problema aquí no debe revertir una venta que el cliente ya pagó.
+        if (transaccion.influencer_id && !transaccion.es_especial && !transaccion.es_test) {
+            try {
+                const { rows: infRows } = await pool.query(
+                    'SELECT porcentaje_comision FROM influencers WHERE id = $1 AND activo = TRUE',
+                    [transaccion.influencer_id]
+                );
+                if (infRows.length > 0) {
+                    const porcentaje = Number(infRows[0].porcentaje_comision);
+                    const montoComision = Math.round(transaccion.valor_pagado * (porcentaje / 100));
+
+                    const { rows: comisionRows } = await pool.query(
+                        `INSERT INTO comisiones (transaccion_id, influencer_id, monto_venta, porcentaje, monto_comision)
+                         VALUES ($1, $2, $3, $4, $5)
+                         ON CONFLICT (transaccion_id) DO NOTHING
+                         RETURNING id`,
+                        [transaccion.id, transaccion.influencer_id, transaccion.valor_pagado, porcentaje, montoComision]
+                    );
+                    if (comisionRows.length > 0) {
+                        await registrarEvento({
+                            tabla: 'comisiones',
+                            registroId: comisionRows[0].id,
+                            accion: 'crear_comision',
+                            despues: { transaccion_id: transaccion.id, influencer_id: transaccion.influencer_id, monto_comision: montoComision },
+                        });
+                    }
+                }
+            } catch (errComision) {
+                console.error('Error calculando comisión de influencer:', errComision.message);
+            }
+        }
 
         // Recalcular pozo de premios con la nueva facturación (fuera de la TX: no bloquea si falla)
         try {

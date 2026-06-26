@@ -3,6 +3,7 @@ const multer = require('multer');
 const pool = require('../db');
 const { obtenerPlan, valorACentavos } = require('../config/planes');
 const { generarFirmaIntegridad, WOMPI_PUBLIC_KEY } = require('../services/wompiService');
+const { resolverAtribucion } = require('../services/referidosService');
 
 const router = express.Router();
 
@@ -65,7 +66,7 @@ const upload = multer({
 
 // POST /api/transacciones/crear-link
 router.post('/crear-link', async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
     const referidoPorToken = tokenReferidoValido(ref);
 
     if (!nombre || !correo || !celular || !partido_id || !valor) {
@@ -76,6 +77,11 @@ router.post('/crear-link', async (req, res) => {
     if (!plan) {
         return res.status(400).json({ success: false, error: 'Valor de bono inválido' });
     }
+
+    // Atribución de afiliado: se verifica la firma del token aquí, fuera de la
+    // transacción de DB, porque solo lee/inserta en referido_clics y nunca debe
+    // hacer fallar la compra si el token está vencido o es inválido.
+    const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
 
     const client = await pool.connect();
     try {
@@ -131,10 +137,10 @@ router.post('/crear-link', async (req, res) => {
 
         // Insertar transacción PENDIENTE
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token)
-             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE', $6)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
+             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
              RETURNING *`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
         );
         const transaccion = transaccionRows[0];
 
@@ -174,7 +180,7 @@ router.post('/crear-link', async (req, res) => {
 // Registra una transacción PENDIENTE pagada por transferencia bancaria, con foto del comprobante.
 // El admin la revisa y aprueba/rechaza manualmente desde el panel.
 router.post('/crear-transferencia', upload.single('comprobante'), async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
     const referidoPorToken = tokenReferidoValido(ref);
 
     if (!nombre || !correo || !celular || !partido_id || !valor) {
@@ -188,6 +194,8 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
     if (!plan) {
         return res.status(400).json({ success: false, error: 'Valor de bono inválido' });
     }
+
+    const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
 
     const client = await pool.connect();
     try {
@@ -209,10 +217,10 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
 
         // Insertar transacción PENDIENTE con el comprobante adjunto
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token)
-             VALUES ($1, $2, 'Transferencia', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token, influencer_id, clic_id)
+             VALUES ($1, $2, 'Transferencia', $3, $4, $5, 'PENDIENTE', $6, $7, $8, $9, $10)
              RETURNING id`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
         );
 
         await client.query('COMMIT');

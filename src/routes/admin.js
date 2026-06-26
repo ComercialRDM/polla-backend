@@ -10,6 +10,7 @@ const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobac
 const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, obtenerRankingEspeciales } = require('../services/especialesService');
+const { registrarEvento } = require('../services/auditoriaService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
@@ -627,6 +628,124 @@ router.patch('/influencers/registros/:id', async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('Error en /admin/influencers/registros/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/afiliados - resumen por influencer: código, % comisión,
+// clics, ventas atribuidas y comisión generada/pagada. Vista de control del
+// programa de afiliados (distinta del ranking de puntos de la Polla).
+router.get('/afiliados', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT i.id, i.codigo_afiliado, i.porcentaje_comision, i.activo,
+                    u.nombre, u.celular,
+                    COUNT(DISTINCT c.id) AS total_clics,
+                    COUNT(DISTINCT co.id) AS total_ventas,
+                    COALESCE(SUM(co.monto_comision), 0) AS comision_generada,
+                    COALESCE(SUM(co.monto_comision) FILTER (WHERE co.estado = 'PENDIENTE'), 0) AS comision_pendiente
+             FROM influencers i
+             JOIN usuarios u ON u.id = i.usuario_id
+             LEFT JOIN referido_clics c ON c.influencer_id = i.id
+             LEFT JOIN comisiones co ON co.influencer_id = i.id
+             GROUP BY i.id, i.codigo_afiliado, i.porcentaje_comision, i.activo, u.nombre, u.celular
+             ORDER BY comision_generada DESC`
+        );
+        return res.json({ success: true, afiliados: rows });
+    } catch (err) {
+        console.error('Error en /admin/afiliados:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/afiliados/:id - ajustar % de comisión o activar/desactivar
+// un influencer como afiliado (no afecta su Bono Especial ni su ranking).
+router.patch('/afiliados/:id', async (req, res) => {
+    const { porcentaje_comision, activo } = req.body;
+    try {
+        const { rows: antesRows } = await pool.query('SELECT * FROM influencers WHERE id = $1', [req.params.id]);
+        if (antesRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Afiliado no encontrado' });
+        }
+
+        const { rows } = await pool.query(
+            `UPDATE influencers
+             SET porcentaje_comision = COALESCE($1, porcentaje_comision),
+                 activo = COALESCE($2, activo)
+             WHERE id = $3
+             RETURNING *`,
+            [porcentaje_comision != null ? Number(porcentaje_comision) : null, activo != null ? !!activo : null, req.params.id]
+        );
+
+        await registrarEvento({
+            tabla: 'influencers',
+            registroId: req.params.id,
+            accion: 'editar_afiliado',
+            actor: req.admin?.usuario,
+            antes: antesRows[0],
+            despues: rows[0],
+        });
+
+        return res.json({ success: true, afiliado: rows[0] });
+    } catch (err) {
+        console.error('Error en /admin/afiliados/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/comisiones?estado=PENDIENTE - lista comisiones individuales
+// (cada venta atribuida), para revisar antes de pagar.
+router.get('/comisiones', async (req, res) => {
+    const { estado } = req.query;
+    try {
+        const { rows } = await pool.query(
+            `SELECT co.id, co.transaccion_id, co.monto_venta, co.porcentaje, co.monto_comision, co.estado, co.creado_en,
+                    i.codigo_afiliado, u.nombre AS influencer_nombre
+             FROM comisiones co
+             JOIN influencers i ON i.id = co.influencer_id
+             JOIN usuarios u ON u.id = i.usuario_id
+             WHERE ($1::text IS NULL OR co.estado = $1)
+             ORDER BY co.creado_en DESC`,
+            [estado || null]
+        );
+        return res.json({ success: true, comisiones: rows });
+    } catch (err) {
+        console.error('Error en /admin/comisiones:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/comisiones/:id - marca una comisión como PAGADA o ANULADA.
+// Ledger append-only: no se borra ni se recalcula, solo cambia el estado.
+router.patch('/comisiones/:id', async (req, res) => {
+    const { estado } = req.body;
+    if (!['PAGADA', 'ANULADA', 'PENDIENTE'].includes(estado)) {
+        return res.status(400).json({ success: false, error: 'Estado inválido' });
+    }
+
+    try {
+        const { rows: antesRows } = await pool.query('SELECT * FROM comisiones WHERE id = $1', [req.params.id]);
+        if (antesRows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Comisión no encontrada' });
+        }
+
+        const { rows } = await pool.query(
+            'UPDATE comisiones SET estado = $1 WHERE id = $2 RETURNING *',
+            [estado, req.params.id]
+        );
+
+        await registrarEvento({
+            tabla: 'comisiones',
+            registroId: req.params.id,
+            accion: `comision_${estado.toLowerCase()}`,
+            actor: req.admin?.usuario,
+            antes: antesRows[0],
+            despues: rows[0],
+        });
+
+        return res.json({ success: true, comision: rows[0] });
+    } catch (err) {
+        console.error('Error en /admin/comisiones/:id:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });

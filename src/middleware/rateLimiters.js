@@ -96,4 +96,14 @@ const influencersLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter };
+// Limita el registro de clics de afiliados: es público y de escritura, así
+// que sin límite sería el blanco más fácil para inflar clics por fuerza bruta.
+const clicLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.' },
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter };

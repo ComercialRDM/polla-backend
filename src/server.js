@@ -18,7 +18,8 @@ const localRouter = require('./routes/local');
 const partidosRouter  = require('./routes/partidos');
 const passkeysRouter  = require('./routes/passkeys');
 const influencersRouter = require('./routes/influencers');
-const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter } = require('./middleware/rateLimiters');
+const referidosRouter = require('./routes/referidos');
+const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
@@ -77,6 +78,7 @@ app.use('/api/local', adminLimiter, localRouter);
 app.use('/api/partidos', pollaLimiter, partidosRouter);
 app.use('/api/passkey', authLimiter, passkeysRouter);
 app.use('/api/influencers', influencersLimiter, influencersRouter);
+app.use('/api/referidos', clicLimiter, referidosRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
@@ -421,6 +423,71 @@ app.listen(PORT, async () => {
         `);
     } catch (err) {
         console.error('Error creando tabla codigos_telefono:', err.message);
+    }
+
+    // Sistema de afiliados/comisiones para influencers: código de afiliado
+    // propio (distinto del token_acceso de sesión), registro de clics,
+    // comisiones por venta atribuida, y auditoría de eventos de dinero.
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS influencers (
+                id                   SERIAL PRIMARY KEY,
+                usuario_id           INTEGER NOT NULL UNIQUE REFERENCES usuarios(id),
+                codigo_afiliado      VARCHAR(30) UNIQUE NOT NULL,
+                porcentaje_comision  NUMERIC(5,2) NOT NULL DEFAULT 10.00,
+                activo               BOOLEAN NOT NULL DEFAULT TRUE,
+                fecha_creacion       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS referido_clics (
+                id              BIGSERIAL PRIMARY KEY,
+                influencer_id   INTEGER NOT NULL REFERENCES influencers(id),
+                ip_hash         TEXT NOT NULL,
+                user_agent      TEXT,
+                utm_source      TEXT,
+                utm_medium      TEXT,
+                utm_campaign    TEXT,
+                valido          BOOLEAN NOT NULL DEFAULT TRUE,
+                motivo_invalido TEXT,
+                creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_clics_influencer_fecha ON referido_clics(influencer_id, creado_en)');
+
+        await pool.query('ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS influencer_id INTEGER REFERENCES influencers(id)');
+        await pool.query('ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS clic_id BIGINT REFERENCES referido_clics(id)');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS comisiones (
+                id              SERIAL PRIMARY KEY,
+                transaccion_id  INTEGER NOT NULL UNIQUE REFERENCES transacciones(id),
+                influencer_id   INTEGER NOT NULL REFERENCES influencers(id),
+                monto_venta     INTEGER NOT NULL,
+                porcentaje      NUMERIC(5,2) NOT NULL,
+                monto_comision  INTEGER NOT NULL,
+                estado          VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                pago_id         INTEGER,
+                creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS auditoria_eventos (
+                id              BIGSERIAL PRIMARY KEY,
+                tabla_afectada  TEXT NOT NULL,
+                registro_id     TEXT NOT NULL,
+                accion          TEXT NOT NULL,
+                actor           TEXT,
+                payload_antes   JSONB,
+                payload_despues JSONB,
+                ip              TEXT,
+                creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error aplicando migración del sistema de afiliados/comisiones:', err.message);
     }
 
     iniciarMonitorPartidos();

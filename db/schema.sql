@@ -221,6 +221,66 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_mime TEXT;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ranking_snapshot_influencer JSONB;
 
 -- ============================================================
+-- Sistema de afiliados/comisiones para influencers.
+-- codigo_afiliado es público (va en los links que comparten) y NUNCA otorga
+-- acceso a la cuenta — a diferencia de transacciones.token_acceso.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS influencers (
+    id                   SERIAL PRIMARY KEY,
+    usuario_id           INTEGER NOT NULL UNIQUE REFERENCES usuarios(id),
+    codigo_afiliado      VARCHAR(30) UNIQUE NOT NULL,
+    porcentaje_comision  NUMERIC(5,2) NOT NULL DEFAULT 10.00,
+    activo               BOOLEAN NOT NULL DEFAULT TRUE,
+    fecha_creacion       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Registro crudo de cada clic (append-only, no se borra: valor forense).
+-- ip_hash es HMAC(ip, secreto), nunca la IP en texto plano.
+CREATE TABLE IF NOT EXISTS referido_clics (
+    id              BIGSERIAL PRIMARY KEY,
+    influencer_id   INTEGER NOT NULL REFERENCES influencers(id),
+    ip_hash         TEXT NOT NULL,
+    user_agent      TEXT,
+    utm_source      TEXT,
+    utm_medium      TEXT,
+    utm_campaign    TEXT,
+    valido          BOOLEAN NOT NULL DEFAULT TRUE,
+    motivo_invalido TEXT,
+    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS influencer_id INTEGER REFERENCES influencers(id);
+ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS clic_id BIGINT REFERENCES referido_clics(id);
+
+-- Ledger de comisiones: append-only. La UNIQUE en transaccion_id es la
+-- idempotencia (nunca puede existir dos comisiones para la misma venta).
+CREATE TABLE IF NOT EXISTS comisiones (
+    id              SERIAL PRIMARY KEY,
+    transaccion_id  INTEGER NOT NULL UNIQUE REFERENCES transacciones(id),
+    influencer_id   INTEGER NOT NULL REFERENCES influencers(id),
+    monto_venta     INTEGER NOT NULL,
+    porcentaje      NUMERIC(5,2) NOT NULL,
+    monto_comision  INTEGER NOT NULL,
+    estado          VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+    pago_id         INTEGER,
+    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Auditoría de eventos de dinero (aprobaciones, comisiones, pagos). Nunca se
+-- actualiza ni se borra.
+CREATE TABLE IF NOT EXISTS auditoria_eventos (
+    id              BIGSERIAL PRIMARY KEY,
+    tabla_afectada  TEXT NOT NULL,
+    registro_id     TEXT NOT NULL,
+    accion          TEXT NOT NULL,
+    actor           TEXT,
+    payload_antes   JSONB,
+    payload_despues JSONB,
+    ip              TEXT,
+    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)

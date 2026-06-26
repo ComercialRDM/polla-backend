@@ -2,6 +2,7 @@ const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoManyChat, enviarMensajeManyChat } = require('./manychatService');
+const { obtenerOcrearInfluencer } = require('./referidosService');
 
 const VALOR_BONO_ESPECIAL_DEFAULT = 500000;
 const INTENTOS_ESPECIAL_DEFAULT = 30;
@@ -99,6 +100,12 @@ async function crearBonosEspeciales({ personas, valorBono = VALOR_BONO_ESPECIAL_
             resultado.token_acceso = transaccion.token_acceso;
             resultado.link = linkPolla;
 
+            // Código de afiliado propio (para comisiones), distinto del
+            // token_acceso de sesión que ya tiene. Se provisiona una sola vez.
+            const influencer = await obtenerOcrearInfluencer(usuario.id, usuario.nombre);
+            resultado.codigo_afiliado = influencer.codigo_afiliado;
+            resultado.link_afiliado = `${process.env.FRONTEND_URL}/?aff=${influencer.codigo_afiliado}`;
+
             if (usuario.correo) {
                 try {
                     const bonoBuffer = await generarImagenBono({
@@ -161,9 +168,11 @@ async function crearBonosEspeciales({ personas, valorBono = VALOR_BONO_ESPECIAL_
 async function listarBonosEspeciales() {
     const { rows } = await pool.query(
         `SELECT t.id AS transaccion_id, t.token_acceso, t.saldo_bono, t.intentos_totales, t.intentos_usados,
-                t.fecha_creacion, u.id AS usuario_id, u.nombre, u.celular, u.correo
+                t.fecha_creacion, u.id AS usuario_id, u.nombre, u.celular, u.correo,
+                i.codigo_afiliado, i.porcentaje_comision
          FROM transacciones t
          JOIN usuarios u ON u.id = t.usuario_id
+         LEFT JOIN influencers i ON i.usuario_id = u.id
          WHERE t.es_especial = TRUE
          ORDER BY t.fecha_creacion DESC`
     );
@@ -178,17 +187,20 @@ async function listarBonosEspeciales() {
  */
 async function enviarInvitacionDifusion(transaccionId) {
     const { rows } = await pool.query(
-        `SELECT t.token_acceso, t.saldo_bono, u.nombre, u.celular, u.manychat_subscriber_id
+        `SELECT t.token_acceso, t.saldo_bono, u.nombre, u.celular, u.manychat_subscriber_id,
+                i.codigo_afiliado, i.porcentaje_comision
          FROM transacciones t
          JOIN usuarios u ON u.id = t.usuario_id
+         LEFT JOIN influencers i ON i.usuario_id = u.id
          WHERE t.id = $1 AND t.es_especial = TRUE`,
         [transaccionId]
     );
     if (rows.length === 0) {
         throw new Error('Bono Especial no encontrado');
     }
-    const { token_acceso, saldo_bono, nombre, celular, manychat_subscriber_id } = rows[0];
+    const { token_acceso, saldo_bono, nombre, celular, manychat_subscriber_id, codigo_afiliado, porcentaje_comision } = rows[0];
     const linkReferido = `${process.env.FRONTEND_URL}/?ref=${token_acceso}`;
+    const linkAfiliado = codigo_afiliado ? `${process.env.FRONTEND_URL}/?aff=${codigo_afiliado}` : null;
 
     const mensaje = `🇨🇴⚽ ¡Hola ${nombre}! Aquí tienes todo para contarle a tus seguidores cómo participar en la Polla Mundialista de La Retoucherie de Manuela:\n\n`
         + `1️⃣ Entran a ${linkReferido}\n`
@@ -197,7 +209,10 @@ async function enviarInvitacionDifusion(transaccionId) {
         + `4️⃣ ¡Pueden ganar hasta $1.000.000 en el Bono Colombia si aciertan el marcador exacto!\n\n`
         + `✂️ La Retoucherie de Manuela arregla y transforma ropa a la medida (dobladillos, ajustes, transformaciones) en Barranquilla.\n\n`
         + `🎁 Como creador de contenido ya tienes tu Bono Especial de $${saldo_bono.toLocaleString('es-CO')} en arreglos de ropa, ¡totalmente real y listo para usar en tienda!\n\n`
-        + `👉 Tu link personal (para que rastreemos a quienes invites): ${linkReferido}`;
+        + `👉 Tu link personal (para que rastreemos a quienes invites): ${linkReferido}`
+        + (linkAfiliado
+            ? `\n\n💰 Además, gana ${Number(porcentaje_comision)}% de comisión por cada venta que generes con tu link de afiliado: ${linkAfiliado}`
+            : '');
 
     const { subscriberId } = await enviarMensajeManyChat({ celular, mensaje, subscriberId: manychat_subscriber_id });
 
