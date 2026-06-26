@@ -194,6 +194,22 @@ CREATE TABLE IF NOT EXISTS codigos_telefono (
 );
 
 -- ============================================================
+-- Tabla: influencer_registros
+-- Solicitudes del formulario público /influencers (nombre, correo, celular,
+-- red donde crea contenido). Queda pendiente hasta que el admin le cree
+-- manualmente el Bono Especial desde la sección "Influenciadores".
+-- ============================================================
+CREATE TABLE IF NOT EXISTS influencer_registros (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(150) NOT NULL,
+    correo          VARCHAR(150) NOT NULL,
+    celular         VARCHAR(20) NOT NULL,
+    red_contenido   VARCHAR(20) NOT NULL CHECK (red_contenido IN ('instagram', 'tiktok', 'ambas')),
+    atendido        BOOLEAN NOT NULL DEFAULT FALSE,
+    fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)

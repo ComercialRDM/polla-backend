@@ -86,4 +86,14 @@ const resetPasswordLimiter = rateLimit({
     keyGenerator: (req) => (req.body?.celular ? `reset:${req.body.celular}` : req.ip),
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter };
+// Limita el formulario público de registro de influencers/creadores de
+// contenido para frenar spam y bots (no requiere autenticación).
+const influencersLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter };

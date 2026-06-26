@@ -580,6 +580,37 @@ router.post('/especiales/:id/invitar', async (req, res) => {
     }
 });
 
+// GET /api/admin/influencers/registros - solicitudes del formulario público
+// de influencers (/influencers), pendientes de que se les cree el Bono
+// Especial manualmente.
+router.get('/influencers/registros', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, nombre, correo, celular, red_contenido, atendido, fecha_registro
+             FROM influencer_registros ORDER BY fecha_registro DESC`
+        );
+        return res.json({ success: true, registros: rows });
+    } catch (err) {
+        console.error('Error en /admin/influencers/registros:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/admin/influencers/registros/:id - marca una solicitud como
+// atendida (ya se le creó/envió el Bono Especial) o la vuelve a pendiente.
+router.patch('/influencers/registros/:id', async (req, res) => {
+    try {
+        await pool.query(
+            'UPDATE influencer_registros SET atendido = $1 WHERE id = $2',
+            [!!req.body.atendido, req.params.id]
+        );
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /admin/influencers/registros/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/apuestas - pronósticos paginados de un partido (100 filas/página)
 // ?partido_id=X&page=1&limit=100&search=
 router.get('/apuestas', async (req, res) => {

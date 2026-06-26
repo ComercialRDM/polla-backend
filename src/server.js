@@ -17,7 +17,8 @@ const simuladorRouter = require('./routes/simulador');
 const localRouter = require('./routes/local');
 const partidosRouter  = require('./routes/partidos');
 const passkeysRouter  = require('./routes/passkeys');
-const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter } = require('./middleware/rateLimiters');
+const influencersRouter = require('./routes/influencers');
+const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 
@@ -75,6 +76,7 @@ app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/local', adminLimiter, localRouter);
 app.use('/api/partidos', pollaLimiter, partidosRouter);
 app.use('/api/passkey', authLimiter, passkeysRouter);
+app.use('/api/influencers', influencersLimiter, influencersRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
@@ -369,6 +371,25 @@ app.listen(PORT, async () => {
         `);
     } catch (err) {
         console.error('Error creando tabla bonos_colombia:', err.message);
+    }
+
+    // Registro público de influencers/creadores de contenido: solicitud que
+    // queda pendiente hasta que el admin les cree manualmente el Bono Especial
+    // desde la sección "Influenciadores" del panel.
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS influencer_registros (
+                id              SERIAL PRIMARY KEY,
+                nombre          VARCHAR(150) NOT NULL,
+                correo          VARCHAR(150) NOT NULL,
+                celular         VARCHAR(20) NOT NULL,
+                red_contenido   VARCHAR(20) NOT NULL CHECK (red_contenido IN ('instagram', 'tiktok', 'ambas')),
+                atendido        BOOLEAN NOT NULL DEFAULT FALSE,
+                fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla influencer_registros:', err.message);
     }
 
     try {
