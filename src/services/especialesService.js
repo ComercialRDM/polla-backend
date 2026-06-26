@@ -29,13 +29,38 @@ async function crearUsuarioEspecial({ nombre, celular, correo }) {
     const correoNorm = correo ? correo.trim() : null;
 
     const { rows: existentes } = await pool.query('SELECT * FROM usuarios WHERE celular = $1', [celularNorm]);
-    if (existentes.length > 0) return existentes[0];
+    let usuario;
+    if (existentes.length > 0) {
+        usuario = existentes[0];
+    } else {
+        const { rows } = await pool.query(
+            'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
+            [nombre, correoNorm, celularNorm]
+        );
+        usuario = rows[0];
+    }
 
-    const { rows } = await pool.query(
-        'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
-        [nombre, correoNorm, celularNorm]
-    );
-    return rows[0];
+    // Si se registró antes en /influencers y subió foto, la copiamos a su
+    // cuenta para que aparezca en el ranking de creadores de contenido.
+    if (!usuario.foto_imagen) {
+        const { rows: fotoRows } = await pool.query(
+            `SELECT foto_imagen, foto_mime FROM influencer_registros
+             WHERE celular = $1 AND foto_imagen IS NOT NULL
+             ORDER BY fecha_registro DESC LIMIT 1`,
+            [celularNorm]
+        );
+        if (fotoRows.length > 0) {
+            await pool.query('UPDATE usuarios SET foto_imagen = $1, foto_mime = $2 WHERE id = $3', [
+                fotoRows[0].foto_imagen,
+                fotoRows[0].foto_mime,
+                usuario.id,
+            ]);
+            usuario.foto_imagen = fotoRows[0].foto_imagen;
+            usuario.foto_mime = fotoRows[0].foto_mime;
+        }
+    }
+
+    return usuario;
 }
 
 async function crearTransaccionEspecial({ usuarioId, partidoId, valorBono, intentos }) {
@@ -183,10 +208,69 @@ async function enviarInvitacionDifusion(transaccionId) {
     return { enviado: true };
 }
 
+/**
+ * Ranking SOLO entre cuentas de Bono Especial (influenciadores/creadores de
+ * contenido), con la misma fórmula de puntaje que el ranking global. Lo usa
+ * tanto el panel admin (GET /api/admin/ranking-especiales) como el ranking
+ * que ve cada influencer en su propio link (GET /api/polla/ranking-influencers).
+ */
+async function obtenerRankingEspeciales() {
+    const { rows } = await pool.query(
+        `SELECT u.id, u.nombre, u.celular, (u.foto_imagen IS NOT NULL) AS tiene_foto,
+                COALESCE(SUM(
+                    CASE
+                        WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                             AND pa.goles_local IS NOT NULL
+                        THEN CASE pa.fase
+                            WHEN 'grupos'        THEN 100
+                            WHEN 'dieciseisavos' THEN 120
+                            WHEN 'octavos'       THEN 200
+                            WHEN 'cuartos'       THEN 250
+                            WHEN 'semifinal'     THEN 800
+                            WHEN 'final'         THEN 2000
+                            ELSE 100 END
+                        WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
+                             AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
+                             AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
+                        THEN CASE pa.fase
+                            WHEN 'grupos'        THEN 50
+                            WHEN 'dieciseisavos' THEN 60
+                            WHEN 'octavos'       THEN 100
+                            WHEN 'cuartos'       THEN 125
+                            WHEN 'semifinal'     THEN 400
+                            WHEN 'final'         THEN 1000
+                            ELSE 50 END
+                        ELSE 0
+                    END
+                ), 0) AS puntos_total,
+                COUNT(
+                    CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
+                              AND pa.goles_local IS NOT NULL THEN 1 END
+                ) AS exactos
+         FROM usuarios u
+         LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+         LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+         WHERE u.id IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
+         GROUP BY u.id, u.nombre, u.celular, u.foto_imagen
+         ORDER BY puntos_total DESC, exactos DESC`
+    );
+
+    return rows.map((u, i) => ({
+        posicion: i + 1,
+        id: u.id,
+        nombre: u.nombre,
+        celular: u.celular,
+        tiene_foto: u.tiene_foto,
+        puntos: Number(u.puntos_total),
+        exactos: Number(u.exactos),
+    }));
+}
+
 module.exports = {
     crearBonosEspeciales,
     listarBonosEspeciales,
     enviarInvitacionDifusion,
+    obtenerRankingEspeciales,
     VALOR_BONO_ESPECIAL_DEFAULT,
     INTENTOS_ESPECIAL_DEFAULT,
 };

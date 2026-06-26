@@ -388,8 +388,24 @@ app.listen(PORT, async () => {
                 fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         `);
+        // Foto opcional del influencer (con autorización de uso) para mostrarla
+        // en el ranking de creadores de contenido.
+        await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS foto_imagen BYTEA`);
+        await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS foto_mime TEXT`);
+        await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS autoriza_foto BOOLEAN NOT NULL DEFAULT FALSE`);
     } catch (err) {
         console.error('Error creando tabla influencer_registros:', err.message);
+    }
+
+    // Foto de perfil (copiada del registro de influencer) y snapshot personal
+    // del ranking de creadores de contenido (para detectar cambios de posición
+    // desde la última vez que cada influencer lo consultó).
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_imagen BYTEA`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_mime TEXT`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ranking_snapshot_influencer JSONB`);
+    } catch (err) {
+        console.error('Error aplicando migración de foto_imagen/ranking_snapshot_influencer:', err.message);
     }
 
     try {

@@ -9,7 +9,7 @@ const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
-const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion } = require('../services/especialesService');
+const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, obtenerRankingEspeciales } = require('../services/especialesService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
@@ -586,12 +586,32 @@ router.post('/especiales/:id/invitar', async (req, res) => {
 router.get('/influencers/registros', async (req, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT id, nombre, correo, celular, red_contenido, atendido, fecha_registro
+            `SELECT id, nombre, correo, celular, red_contenido, atendido, fecha_registro,
+                    (foto_imagen IS NOT NULL) AS tiene_foto
              FROM influencer_registros ORDER BY fecha_registro DESC`
         );
         return res.json({ success: true, registros: rows });
     } catch (err) {
         console.error('Error en /admin/influencers/registros:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/influencers/registros/:id/foto - foto adjunta al registro
+// (si subió y autorizó). Requiere sesión admin, igual que el comprobante de pago.
+router.get('/influencers/registros/:id/foto', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT foto_imagen, foto_mime FROM influencer_registros WHERE id = $1',
+            [req.params.id]
+        );
+        if (rows.length === 0 || !rows[0].foto_imagen) {
+            return res.status(404).json({ success: false, error: 'No hay foto para este registro' });
+        }
+        res.set('Content-Type', rows[0].foto_mime || 'image/jpeg');
+        return res.send(rows[0].foto_imagen);
+    } catch (err) {
+        console.error('Error en /admin/influencers/registros/:id/foto:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
@@ -900,57 +920,8 @@ router.get('/ranking-global', async (req, res) => {
 // puntaje que /ranking-global.
 router.get('/ranking-especiales', async (req, res) => {
     try {
-        const { rows } = await pool.query(
-            `SELECT u.id, u.nombre, u.celular,
-                    COALESCE(SUM(
-                        CASE
-                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
-                                 AND pa.goles_local IS NOT NULL
-                            THEN CASE pa.fase
-                                WHEN 'grupos'        THEN 100
-                                WHEN 'dieciseisavos' THEN 120
-                                WHEN 'octavos'       THEN 200
-                                WHEN 'cuartos'       THEN 250
-                                WHEN 'semifinal'     THEN 800
-                                WHEN 'final'         THEN 2000
-                                ELSE 100 END
-                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
-                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
-                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                            THEN CASE pa.fase
-                                WHEN 'grupos'        THEN 50
-                                WHEN 'dieciseisavos' THEN 60
-                                WHEN 'octavos'       THEN 100
-                                WHEN 'cuartos'       THEN 125
-                                WHEN 'semifinal'     THEN 400
-                                WHEN 'final'         THEN 1000
-                                ELSE 50 END
-                            ELSE 0
-                        END
-                    ), 0) AS puntos_total,
-                    COUNT(
-                        CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
-                                  AND pa.goles_local IS NOT NULL THEN 1 END
-                    ) AS exactos
-             FROM usuarios u
-             LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
-             LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
-             WHERE u.id IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
-             GROUP BY u.id, u.nombre, u.celular
-             ORDER BY puntos_total DESC, exactos DESC`
-        );
-
-        return res.json({
-            success: true,
-            ranking: rows.map((u, i) => ({
-                posicion: i + 1,
-                id: u.id,
-                nombre: u.nombre,
-                celular: u.celular,
-                puntos: Number(u.puntos_total),
-                exactos: Number(u.exactos),
-            })),
-        });
+        const ranking = await obtenerRankingEspeciales();
+        return res.json({ success: true, ranking });
     } catch (err) {
         console.error('Error en GET /admin/ranking-especiales:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });

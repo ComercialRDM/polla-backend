@@ -9,6 +9,7 @@ const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
 const { votarLimiter } = require('../middleware/rateLimiters');
 const usuarioAuth = require('../middleware/usuarioAuth');
+const { obtenerRankingEspeciales } = require('../services/especialesService');
 
 const router = express.Router();
 
@@ -191,6 +192,71 @@ router.get('/info', async (req, res) => {
     } catch (err) {
         console.error('Error en /polla/info:', err);
         return res.status(500).json({ acceso: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/polla/foto-influencer/:usuarioId - foto de perfil de un creador de
+// contenido para el ranking de influencers. Pública (igual que /bono/:token):
+// solo expone una imagen por id numérico, sin otro dato personal.
+router.get('/foto-influencer/:usuarioId', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT foto_imagen, foto_mime FROM usuarios WHERE id = $1',
+            [req.params.usuarioId]
+        );
+        if (rows.length === 0 || !rows[0].foto_imagen) {
+            return res.status(404).send('No encontrada');
+        }
+        res.set('Content-Type', rows[0].foto_mime || 'image/jpeg');
+        return res.send(rows[0].foto_imagen);
+    } catch (err) {
+        console.error('Error en /polla/foto-influencer/:usuarioId:', err);
+        return res.status(500).send('Error interno');
+    }
+});
+
+// GET /api/polla/ranking-influencers?token_acceso= - ranking SOLO entre
+// creadores de contenido (Bono Especial), visible desde el link personal del
+// influencer en /polla. Devuelve además el snapshot de posiciones que ese
+// mismo influencer vio la última vez, para que el frontend anime los cambios
+// de puesto desde su última visita, y actualiza ese snapshot a la posición
+// actual para la próxima vez.
+router.get('/ranking-influencers', async (req, res) => {
+    const { token_acceso } = req.query;
+
+    if (!token_acceso) {
+        return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT t.usuario_id, t.es_especial
+             FROM transacciones t
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
+             LIMIT 1`,
+            [token_acceso]
+        );
+
+        if (rows.length === 0 || !rows[0].es_especial) {
+            return res.status(403).json({ success: false, error: 'Este link no tiene acceso al ranking de creadores de contenido' });
+        }
+
+        const usuarioId = rows[0].usuario_id;
+        const ranking = await obtenerRankingEspeciales();
+
+        const { rows: snapRows } = await pool.query(
+            'SELECT ranking_snapshot_influencer FROM usuarios WHERE id = $1',
+            [usuarioId]
+        );
+        const snapshotAnterior = snapRows[0]?.ranking_snapshot_influencer || null;
+
+        const nuevoSnapshot = JSON.stringify(ranking.map((r) => ({ id: r.id, posicion: r.posicion })));
+        await pool.query('UPDATE usuarios SET ranking_snapshot_influencer = $1 WHERE id = $2', [nuevoSnapshot, usuarioId]);
+
+        return res.json({ success: true, ranking, mi_usuario_id: usuarioId, snapshot_anterior: snapshotAnterior });
+    } catch (err) {
+        console.error('Error en /polla/ranking-influencers:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 

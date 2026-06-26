@@ -206,8 +206,19 @@ CREATE TABLE IF NOT EXISTS influencer_registros (
     celular         VARCHAR(20) NOT NULL,
     red_contenido   VARCHAR(20) NOT NULL CHECK (red_contenido IN ('instagram', 'tiktok', 'ambas')),
     atendido        BOOLEAN NOT NULL DEFAULT FALSE,
+    foto_imagen     BYTEA,
+    foto_mime       TEXT,
+    autoriza_foto   BOOLEAN NOT NULL DEFAULT FALSE,
     fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- usuarios.foto_imagen / foto_mime: copiada de influencer_registros al crear
+-- el Bono Especial (mismo celular). usuarios.ranking_snapshot_influencer:
+-- última posición que ese influencer vio en su ranking, para animar los
+-- cambios la siguiente vez que entre.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_imagen BYTEA;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_mime TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ranking_snapshot_influencer JSONB;
 
 -- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
