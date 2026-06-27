@@ -194,8 +194,16 @@ router.post('/crear-link', async (req, res) => {
 // POST /api/transacciones/crear-transferencia
 // Registra una transacción PENDIENTE pagada por transferencia bancaria, con foto del comprobante.
 // El admin la revisa y aprueba/rechaza manualmente desde el panel.
+// Métodos manuales válidos para este endpoint: ambos se aprueban a mano desde
+// el panel admin (no hay confirmación automática), 'BREB' solo existe porque
+// Bre-B todavía no tiene API/webhook público para comercio electrónico — el
+// cliente transfiere a la llave desde su app y sube el comprobante igual que
+// con transferencia bancaria.
+const METODOS_MANUALES_VALIDOS = new Set(['Transferencia', 'BREB']);
+
 router.post('/crear-transferencia', upload.single('comprobante'), async (req, res) => {
     const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
+    const metodo = METODOS_MANUALES_VALIDOS.has(req.body.metodo) ? req.body.metodo : 'Transferencia';
     const referidoPorToken = tokenReferidoValido(ref);
 
     if (!nombre || !correo || !celular || !partido_id || !valor) {
@@ -233,9 +241,9 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
         // Insertar transacción PENDIENTE con el comprobante adjunto
         const { rows: transaccionRows } = await client.query(
             `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token, influencer_id, clic_id)
-             VALUES ($1, $2, 'Transferencia', $3, $4, $5, 'PENDIENTE', $6, $7, $8, $9, $10)
+             VALUES ($1, $2, $3, $4, $5, $6, 'PENDIENTE', $7, $8, $9, $10, $11)
              RETURNING id`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+            [usuario.id, partido_id, metodo, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
         );
 
         await client.query('COMMIT');
@@ -245,7 +253,7 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
             registroId: transaccionRows[0].id,
             accion: 'crear_transaccion',
             actor: String(usuario.id),
-            despues: { metodo: 'Transferencia', valor_pagado: Number(valor), celular, correo },
+            despues: { metodo, valor_pagado: Number(valor), celular, correo },
             ip: obtenerIp(req),
             userAgent: req.headers['user-agent'],
         });
