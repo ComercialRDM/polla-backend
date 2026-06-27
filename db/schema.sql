@@ -21,6 +21,12 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS equipos_favoritos TEXT[] NOT NULL 
 -- Token público para el feed de calendario (.ics) de partidos de equipos favoritos
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS calendario_token UUID NOT NULL DEFAULT gen_random_uuid();
 
+-- Documento de identidad: lo exige Wompi para pagos PSE vía API directa
+-- (payment_method.user_legal_id / user_legal_id_type). Nullable porque
+-- usuarios existentes y los que pagan con tarjeta/Nequi no lo necesitan.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(5);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS documento VARCHAR(20);
+
 -- Cuenta de acceso (celular + contraseña) para el registro general de clientes
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE usuarios ALTER COLUMN correo DROP NOT NULL;

@@ -6,6 +6,9 @@ const { generarFirmaIntegridad, WOMPI_PUBLIC_KEY } = require('../services/wompiS
 const { resolverAtribucion } = require('../services/referidosService');
 const { obtenerIp } = require('../utils/request');
 const { registrarEvento } = require('../services/auditoriaService');
+const { obtenerBancosPSE, crearTransaccionPSE, crearTransaccionBancolombiaTransfer } = require('../services/wompiApiService');
+
+const DOCUMENTO_TIPOS_VALIDOS = new Set(['CC', 'CE', 'NIT']);
 
 const router = express.Router();
 
@@ -256,6 +259,180 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
         await client.query('ROLLBACK');
         console.error('Error en crear-transferencia:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno al registrar la transferencia' });
+    } finally {
+        client.release();
+    }
+});
+
+// Guarda el documento de identidad en el usuario si se mandó uno (lo exige
+// PSE). No se sobreescribe con vacío para no borrar un documento ya guardado.
+async function guardarDocumentoSiFalta(client, usuarioId, tipoDocumento, documento) {
+    if (!tipoDocumento || !documento) return;
+    await client.query(
+        'UPDATE usuarios SET tipo_documento = $1, documento = $2 WHERE id = $3',
+        [tipoDocumento, documento, usuarioId]
+    );
+}
+
+// GET /api/transacciones/bancos-pse - lista de bancos para el selector de PSE
+router.get('/bancos-pse', async (req, res) => {
+    try {
+        const bancos = await obtenerBancosPSE();
+        return res.json({ success: true, bancos });
+    } catch (err) {
+        console.error('Error en /transacciones/bancos-pse:', err.response?.data || err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo cargar la lista de bancos' });
+    }
+});
+
+// POST /api/transacciones/crear-pse - crea la transacción PENDIENTE y la transacción
+// real en Wompi vía API directa (no Widget), devuelve la URL a la que redirigir
+// al cliente para que termine el pago en su banco.
+router.post('/crear-pse', async (req, res) => {
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token, tipo_documento, documento, financial_institution_code } = req.body;
+    const referidoPorToken = tokenReferidoValido(ref);
+
+    if (!nombre || !correo || !celular || !partido_id || !valor) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+    if (!DOCUMENTO_TIPOS_VALIDOS.has(tipo_documento) || !String(documento || '').trim()) {
+        return res.status(400).json({ success: false, error: 'Ingresa un tipo y número de documento válido (lo exige PSE)' });
+    }
+    if (!financial_institution_code) {
+        return res.status(400).json({ success: false, error: 'Selecciona tu banco' });
+    }
+
+    const plan = obtenerPlan(Number(valor));
+    if (!plan) {
+        return res.status(400).json({ success: false, error: 'Valor de bono inválido' });
+    }
+
+    const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1', [partido_id]);
+        if (partidoRows.length === 0 || partidoRows[0].estado !== 'activo') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'Este partido no está disponible para nuevas compras' });
+        }
+
+        const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
+        await guardarDocumentoSiFalta(client, usuario.id, tipo_documento, documento);
+
+        const { rows: transaccionRows } = await client.query(
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
+             VALUES ($1, $2, 'PSE', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+             RETURNING *`,
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+        );
+        const transaccion = transaccionRows[0];
+        const reference = generarReference(transaccion.id);
+        await client.query('UPDATE transacciones SET reference = $1 WHERE id = $2', [reference, transaccion.id]);
+
+        await client.query('COMMIT');
+
+        const { pasarelaTransaccionId, asyncPaymentUrl } = await crearTransaccionPSE({
+            reference,
+            amountInCents: valorACentavos(Number(valor)),
+            customerEmail: correo,
+            redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
+            userLegalIdType: tipo_documento,
+            userLegalId: documento,
+            financialInstitutionCode: financial_institution_code,
+            paymentDescription: `Bono Retoucherie $${Number(valor).toLocaleString('es-CO')}`,
+        });
+
+        await pool.query('UPDATE transacciones SET pasarela_transaccion_id = $1 WHERE id = $2', [pasarelaTransaccionId, transaccion.id]);
+
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccion.id,
+            accion: 'crear_transaccion_pse',
+            actor: String(usuario.id),
+            despues: { valor_pagado: Number(valor), celular, financial_institution_code },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
+        return res.json({ success: true, redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error en crear-pse:', err.response?.data || err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo iniciar el pago por PSE. Intenta de nuevo.' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/transacciones/crear-bancolombia - igual que crear-pse pero con Botón
+// Bancolombia (no exige documento según la documentación de Wompi).
+router.post('/crear-bancolombia', async (req, res) => {
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
+    const referidoPorToken = tokenReferidoValido(ref);
+
+    if (!nombre || !correo || !celular || !partido_id || !valor) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+
+    const plan = obtenerPlan(Number(valor));
+    if (!plan) {
+        return res.status(400).json({ success: false, error: 'Valor de bono inválido' });
+    }
+
+    const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows: partidoRows } = await client.query('SELECT * FROM partidos WHERE id = $1', [partido_id]);
+        if (partidoRows.length === 0 || partidoRows[0].estado !== 'activo') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'Este partido no está disponible para nuevas compras' });
+        }
+
+        const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
+
+        const { rows: transaccionRows } = await client.query(
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
+             VALUES ($1, $2, 'BANCOLOMBIA_TRANSFER', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+             RETURNING *`,
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+        );
+        const transaccion = transaccionRows[0];
+        const reference = generarReference(transaccion.id);
+        await client.query('UPDATE transacciones SET reference = $1 WHERE id = $2', [reference, transaccion.id]);
+
+        await client.query('COMMIT');
+
+        const { pasarelaTransaccionId, asyncPaymentUrl } = await crearTransaccionBancolombiaTransfer({
+            reference,
+            amountInCents: valorACentavos(Number(valor)),
+            customerEmail: correo,
+            redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
+            paymentDescription: `Bono Retoucherie $${Number(valor).toLocaleString('es-CO')}`,
+        });
+
+        await pool.query('UPDATE transacciones SET pasarela_transaccion_id = $1 WHERE id = $2', [pasarelaTransaccionId, transaccion.id]);
+
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccion.id,
+            accion: 'crear_transaccion_bancolombia',
+            actor: String(usuario.id),
+            despues: { valor_pagado: Number(valor), celular },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
+        return res.json({ success: true, redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error en crear-bancolombia:', err.response?.data || err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo iniciar el pago con Botón Bancolombia. Intenta de nuevo.' });
     } finally {
         client.release();
     }

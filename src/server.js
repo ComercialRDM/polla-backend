@@ -131,6 +131,15 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de google_id:', err.message);
     }
 
+    // Documento de identidad: lo exige Wompi para PSE vía API directa
+    // (payment_method.user_legal_id / user_legal_id_type).
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(5)`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS documento VARCHAR(20)`);
+    } catch (err) {
+        console.error('Error aplicando migración de documento/tipo_documento:', err.message);
+    }
+
     try {
         await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido BOOLEAN NOT NULL DEFAULT FALSE`);
         await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS bono_consumido_en TIMESTAMPTZ`);

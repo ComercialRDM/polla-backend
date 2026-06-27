@@ -10,7 +10,7 @@
 // Uso:  k6 run loadtest/03-votar.js
 import http from 'k6/http';
 import { check } from 'k6';
-import { BASE_URL, ESCALAS_LLEGADAS } from './common.js';
+import { BASE_URL, ESCALAS_LLEGADAS, headersConIpFalsa } from './common.js';
 
 const tokens = JSON.parse(open('./data/tokens.json'));
 
@@ -48,7 +48,7 @@ export default function () {
     });
 
     const res = http.post(`${BASE_URL}/api/polla/votar`, payload, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: headersConIpFalsa(__VU),
     });
 
     check(res, { 'votar no es error de servidor (5xx)': (r) => r.status < 500 });

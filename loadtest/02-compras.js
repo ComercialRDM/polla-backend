@@ -6,7 +6,7 @@
 // Uso:  k6 run loadtest/02-compras.js
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { BASE_URL, ESCALAS_LLEGADAS } from './common.js';
+import { BASE_URL, ESCALAS_LLEGADAS, headersConIpFalsa } from './common.js';
 
 export const options = {
     scenarios: {
@@ -27,7 +27,7 @@ export const options = {
 
 export function setup() {
     const res = http.get(`${BASE_URL}/api/partidos/`);
-    const partidos = res.json();
+    const partidos = res.json('partidos');
     const partido = partidos.find((p) => p.equipo_local === 'LoadTest A') || partidos[0];
     if (!partido) {
         throw new Error('No hay partidos en la BD. Corre primero scripts/seed-loadtest.js');
@@ -48,7 +48,7 @@ export default function (data) {
     });
 
     const res = http.post(`${BASE_URL}/api/transacciones/crear-link`, payload, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: headersConIpFalsa(__VU),
     });
 
     check(res, { 'crear-link OK': (r) => r.status === 200 });
