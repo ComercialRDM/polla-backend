@@ -4,6 +4,8 @@ const pool = require('../db');
 const { obtenerPlan, valorACentavos } = require('../config/planes');
 const { generarFirmaIntegridad, WOMPI_PUBLIC_KEY } = require('../services/wompiService');
 const { resolverAtribucion } = require('../services/referidosService');
+const { obtenerIp } = require('../utils/request');
+const { registrarEvento } = require('../services/auditoriaService');
 
 const router = express.Router();
 
@@ -153,6 +155,16 @@ router.post('/crear-link', async (req, res) => {
 
         await client.query('COMMIT');
 
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccion.id,
+            accion: 'crear_transaccion',
+            actor: String(usuario.id),
+            despues: { metodo: 'Wompi', valor_pagado: Number(valor), celular, correo },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
         return res.json({
             success: true,
             widget: {
@@ -224,6 +236,16 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
         );
 
         await client.query('COMMIT');
+
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccionRows[0].id,
+            accion: 'crear_transaccion',
+            actor: String(usuario.id),
+            despues: { metodo: 'Transferencia', valor_pagado: Number(valor), celular, correo },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
 
         return res.json({
             success: true,

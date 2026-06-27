@@ -277,6 +277,7 @@ CREATE TABLE IF NOT EXISTS auditoria_eventos (
     payload_antes   JSONB,
     payload_despues JSONB,
     ip              TEXT,
+    user_agent      TEXT,
     creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

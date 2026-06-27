@@ -9,6 +9,8 @@ const { enviarCorreoResetPassword } = require('../services/emailService');
 const adminAuth = require('../middleware/adminAuth');
 const { otpLimiter, resetPasswordLimiter } = require('../middleware/rateLimiters');
 const { generarTokenUsuario } = require('../utils/userTokens');
+const { obtenerIp } = require('../utils/request');
+const { registrarEvento } = require('../services/auditoriaService');
 
 const router = express.Router();
 
@@ -107,6 +109,15 @@ router.post('/registro', async (req, res) => {
             usuario = rows[0];
         }
 
+        await registrarEvento({
+            tabla: 'usuarios',
+            registroId: usuario.id,
+            accion: 'registro',
+            actor: String(usuario.id),
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
         return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('Error en /auth/registro:', err);
@@ -143,6 +154,16 @@ router.post('/login', async (req, res) => {
         }
 
         const { password_hash, ...usuario } = rows[0];
+
+        await registrarEvento({
+            tabla: 'usuarios',
+            registroId: usuario.id,
+            accion: 'login',
+            actor: String(usuario.id),
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
         return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {
         console.error('Error en /auth/login:', err);
@@ -185,12 +206,31 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Código incorrecto o vencido.' });
         }
 
+        // Twilio Verify no guarda nada en nuestra BD una vez usado el código (ver
+        // twilioVerifyService.js); este es el único rastro propio de "este celular
+        // quedó verificado en este momento" que le queda al sistema.
+        await registrarEvento({
+            tabla: 'codigos_telefono',
+            registroId: celularNormalizado,
+            accion: 'telefono_verificado',
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
         const { rows: usuarioRows } = await pool.query(
             'SELECT id, nombre, celular, equipos_favoritos, calendario_token FROM usuarios WHERE celular = $1',
             [celularNormalizado]
         );
 
         if (usuarioRows.length > 0) {
+            await registrarEvento({
+                tabla: 'usuarios',
+                registroId: usuarioRows[0].id,
+                accion: 'login_telefono',
+                actor: String(usuarioRows[0].id),
+                ip: obtenerIp(req),
+                userAgent: req.headers['user-agent'],
+            });
             return res.json({ success: true, usuario: usuarioRows[0], token: generarTokenUsuario(usuarioRows[0]) });
         }
 
@@ -248,6 +288,16 @@ router.post('/telefono/completar', async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        await registrarEvento({
+            tabla: 'usuarios',
+            registroId: nuevoUsuario[0].id,
+            accion: 'registro_telefono',
+            actor: String(nuevoUsuario[0].id),
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
+
         return res.json({ success: true, usuario: nuevoUsuario[0], token: generarTokenUsuario(nuevoUsuario[0]) });
     } catch (err) {
         await client.query('ROLLBACK');
@@ -417,6 +467,14 @@ router.post('/google', async (req, res) => {
             [googleId]
         );
         if (porGoogleId.length > 0) {
+            await registrarEvento({
+                tabla: 'usuarios',
+                registroId: porGoogleId[0].id,
+                accion: 'login_google',
+                actor: String(porGoogleId[0].id),
+                ip: obtenerIp(req),
+                userAgent: req.headers['user-agent'],
+            });
             return res.json({ success: true, usuario: porGoogleId[0], token: generarTokenUsuario(porGoogleId[0]) });
         }
 
@@ -428,6 +486,14 @@ router.post('/google', async (req, res) => {
             );
             if (porCorreo.length > 0) {
                 await pool.query('UPDATE usuarios SET google_id = $1 WHERE id = $2', [googleId, porCorreo[0].id]);
+                await registrarEvento({
+                    tabla: 'usuarios',
+                    registroId: porCorreo[0].id,
+                    accion: 'vincular_google',
+                    actor: String(porCorreo[0].id),
+                    ip: obtenerIp(req),
+                    userAgent: req.headers['user-agent'],
+                });
                 return res.json({ success: true, usuario: porCorreo[0], token: generarTokenUsuario(porCorreo[0]) });
             }
         }
@@ -495,6 +561,15 @@ router.post('/google/completar', async (req, res) => {
             );
             usuario = rows[0];
         }
+
+        await registrarEvento({
+            tabla: 'usuarios',
+            registroId: usuario.id,
+            accion: existentes.length > 0 ? 'vincular_google' : 'registro_google',
+            actor: String(usuario.id),
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
 
         return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
     } catch (err) {

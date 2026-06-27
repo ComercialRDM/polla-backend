@@ -6,14 +6,14 @@ const pool = require('../db');
  * venta/comisión, para poder reconstruir "quién hizo qué y cuándo" si hay
  * una disputa. Nunca lanza: un fallo en auditoría no debe tumbar la
  * operación principal que la originó.
- * @param {{ tabla: string, registroId: string|number, accion: string, actor?: string, antes?: object, despues?: object, ip?: string }} datos
+ * @param {{ tabla: string, registroId: string|number, accion: string, actor?: string, antes?: object, despues?: object, ip?: string, userAgent?: string }} datos
  */
-async function registrarEvento({ tabla, registroId, accion, actor, antes, despues, ip }) {
+async function registrarEvento({ tabla, registroId, accion, actor, antes, despues, ip, userAgent }) {
     try {
         await pool.query(
-            `INSERT INTO auditoria_eventos (tabla_afectada, registro_id, accion, actor, payload_antes, payload_despues, ip)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [tabla, String(registroId), accion, actor || 'sistema', antes ? JSON.stringify(antes) : null, despues ? JSON.stringify(despues) : null, ip || null]
+            `INSERT INTO auditoria_eventos (tabla_afectada, registro_id, accion, actor, payload_antes, payload_despues, ip, user_agent)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [tabla, String(registroId), accion, actor || 'sistema', antes ? JSON.stringify(antes) : null, despues ? JSON.stringify(despues) : null, ip || null, userAgent || null]
         );
     } catch (err) {
         console.error('Error registrando auditoría:', err.message);

@@ -10,6 +10,8 @@ const { generarICS } = require('../services/calendarioService');
 const { votarLimiter } = require('../middleware/rateLimiters');
 const usuarioAuth = require('../middleware/usuarioAuth');
 const { obtenerRankingEspeciales } = require('../services/especialesService');
+const { obtenerIp } = require('../utils/request');
+const { registrarEvento } = require('../services/auditoriaService');
 
 const router = express.Router();
 
@@ -444,13 +446,26 @@ router.post('/votar', votarLimiter, async (req, res) => {
         }
 
         // Insertar el pronóstico registrando el costo en cupos de esta fase
-        await client.query(
+        const { rows: pronosticoRows } = await client.query(
             `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, cupos_costo)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id`,
             [transaccionRows[0].id, usuario_id, partido_id, local, visitante, costoPartido]
         );
 
         await client.query('COMMIT');
+
+        // El endpoint identifica al usuario solo por `token_acceso` (no exige sesión
+        // JWT) — IP/user-agent quedan como única evidencia adicional de quién votó.
+        await registrarEvento({
+            tabla: 'pronosticos',
+            registroId: pronosticoRows[0].id,
+            accion: 'votar',
+            actor: String(usuario_id),
+            despues: { partido_id, local, visitante, token_acceso },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
 
         invalidate(`ranking:${partido_id}`);
         invalidate(`resumen:${partido_id}`);

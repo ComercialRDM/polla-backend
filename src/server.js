@@ -490,6 +490,14 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración del sistema de afiliados/comisiones:', err.message);
     }
 
+    // Trazabilidad: IP + user-agent en eventos de auditoría (registro, login,
+    // pronósticos, webhooks), para tener evidencia ante disputas/reclamos.
+    try {
+        await pool.query(`ALTER TABLE auditoria_eventos ADD COLUMN IF NOT EXISTS user_agent TEXT`);
+    } catch (err) {
+        console.error('Error aplicando migración de user_agent en auditoria_eventos:', err.message);
+    }
+
     iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
 });

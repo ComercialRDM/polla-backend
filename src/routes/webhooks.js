@@ -5,6 +5,8 @@ const { validarFirmaWebhook } = require('../services/wompiService');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { calcularRanking } = require('../services/rankingService');
 const { notificarGanadoresDelGol } = require('../services/notificacionesService');
+const { registrarEvento } = require('../services/auditoriaService');
+const { obtenerIp } = require('../utils/request');
 
 const router = express.Router();
 
@@ -60,6 +62,17 @@ router.post('/wompi', async (req, res) => {
         }
 
         const transaccion = rows[0];
+
+        // Firma ya validada arriba: se guarda el payload crudo completo de Wompi
+        // como evidencia forense, independiente de los campos derivados que se
+        // usan para aprobar/rechazar (esos pueden cambiar de formato; este no).
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: transaccion.id,
+            accion: 'webhook_wompi_recibido',
+            despues: evento,
+            ip: obtenerIp(req),
+        });
 
         if (status === 'APPROVED') {
             // Verificación anti-fraude: el monto recibido debe coincidir con lo esperado
