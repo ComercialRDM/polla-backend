@@ -512,7 +512,8 @@ router.post('/votar', votarLimiter, async (req, res) => {
 
 // POST /api/polla/registrar-compartida
 // Registra que el usuario compartió su pronóstico de un partido (máx 1 vez por partido).
-// Si es la primera vez, otorga 1 punto bonus al usuario.
+// Si es la primera vez, otorga 20 puntos bonus al usuario (mismo tope y valor que el
+// programa de referidos, ver aprobacionService.js).
 router.post('/registrar-compartida', async (req, res) => {
     const { token_acceso, partido_id } = req.body;
     if (!token_acceso || !partido_id) {
@@ -543,10 +544,10 @@ router.post('/registrar-compartida', async (req, res) => {
         let puntos_ganados = 0;
         if (rowCount > 0) {
             await client.query(
-                'UPDATE usuarios SET puntos_bonus = LEAST(puntos_bonus + 10, 200) WHERE id = $1',
+                'UPDATE usuarios SET puntos_bonus = LEAST(puntos_bonus + 20, 500) WHERE id = $1',
                 [usuario_id]
             );
-            puntos_ganados = 10;
+            puntos_ganados = 20;
         }
 
         await client.query('COMMIT');

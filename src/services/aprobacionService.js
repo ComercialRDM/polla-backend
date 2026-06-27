@@ -32,7 +32,8 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         let transaccion = rows[0];
 
         // Recompensa por referido: si esta compra vino de un link de referido, ambos ganan 1 intento extra
-        // Además el referidor gana 5 puntos bonus en el ranking de la polla
+        // Además el referidor gana 20 puntos bonus en el ranking de la polla (mismo valor y
+        // tope que "Comparte en Instagram", ver polla.js /registrar-compartida)
         if (transaccion.referido_por_token && !transaccion.referido_bono_otorgado) {
             const { rows: referidorRows } = await client.query(
                 `UPDATE transacciones SET intentos_totales = intentos_totales + 1
