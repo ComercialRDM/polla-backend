@@ -1,0 +1,26 @@
+name: Backup polla-db a Cloudflare R2
+
+on:
+  schedule:
+    # Aproximadamente cada 3 días (día del mes 1,4,7,...) a las 07:00 UTC (02:00 hora Colombia)
+    - cron: '0 7 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump de la base de datos
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: docker run --rm postgres:18 pg_dump "$DATABASE_URL" -F c > backup.dump
+
+      - name: Subir backup a Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          FILENAME="backup-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
+          aws s3 cp backup.dump "s3://${{ secrets.R2_BUCKET }}/polla-db/$FILENAME" \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
