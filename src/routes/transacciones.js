@@ -338,6 +338,8 @@ router.post('/crear-pse', async (req, res) => {
             reference,
             amountInCents: valorACentavos(Number(valor)),
             customerEmail: correo,
+            customerName: nombre,
+            customerPhone: celular,
             redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
             userLegalIdType: tipo_documento,
             userLegalId: documento,
@@ -412,6 +414,8 @@ router.post('/crear-bancolombia', async (req, res) => {
             reference,
             amountInCents: valorACentavos(Number(valor)),
             customerEmail: correo,
+            customerName: nombre,
+            customerPhone: celular,
             redirectUrl: `${process.env.FRONTEND_URL}/gracias?token=${transaccion.token_acceso}`,
             paymentDescription: `Bono Retoucherie $${Number(valor).toLocaleString('es-CO')}`,
         });

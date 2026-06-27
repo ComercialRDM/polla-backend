@@ -60,7 +60,7 @@ async function esperarUrlAsincrona(transaccionId, { intentos = 15, intervaloMs =
  * de integridad) porque esto mueve dinero del lado del servidor.
  * @returns {Promise<{ pasarelaTransaccionId: string, asyncPaymentUrl: string }>}
  */
-async function crearTransaccionDirecta({ reference, amountInCents, customerEmail, redirectUrl, paymentMethod }) {
+async function crearTransaccionDirecta({ reference, amountInCents, customerEmail, customerName, customerPhone, redirectUrl, paymentMethod }) {
     const { acceptanceToken, acceptPersonalAuth } = await obtenerAcceptanceTokens();
     const signature = generarFirmaIntegridad({ reference, amountInCents, currency: 'COP' });
 
@@ -72,6 +72,11 @@ async function crearTransaccionDirecta({ reference, amountInCents, customerEmail
             amount_in_cents: amountInCents,
             currency: 'COP',
             customer_email: customerEmail,
+            customer_data: {
+                full_name: customerName,
+                phone_number: customerPhone,
+                phone_number_prefix: '+57',
+            },
             reference,
             redirect_url: redirectUrl,
             signature,
@@ -91,11 +96,13 @@ async function crearTransaccionDirecta({ reference, amountInCents, customerEmail
 /**
  * @param {{ userLegalIdType: 'CC'|'CE'|'NIT', userLegalId: string, financialInstitutionCode: string, paymentDescription: string }} datosPse
  */
-function crearTransaccionPSE({ reference, amountInCents, customerEmail, redirectUrl, userLegalIdType, userLegalId, financialInstitutionCode, paymentDescription }) {
+function crearTransaccionPSE({ reference, amountInCents, customerEmail, customerName, customerPhone, redirectUrl, userLegalIdType, userLegalId, financialInstitutionCode, paymentDescription }) {
     return crearTransaccionDirecta({
         reference,
         amountInCents,
         customerEmail,
+        customerName,
+        customerPhone,
         redirectUrl,
         paymentMethod: {
             type: 'PSE',
@@ -108,11 +115,13 @@ function crearTransaccionPSE({ reference, amountInCents, customerEmail, redirect
     });
 }
 
-function crearTransaccionBancolombiaTransfer({ reference, amountInCents, customerEmail, redirectUrl, paymentDescription }) {
+function crearTransaccionBancolombiaTransfer({ reference, amountInCents, customerEmail, customerName, customerPhone, redirectUrl, paymentDescription }) {
     return crearTransaccionDirecta({
         reference,
         amountInCents,
         customerEmail,
+        customerName,
+        customerPhone,
         redirectUrl,
         paymentMethod: {
             type: 'BANCOLOMBIA_TRANSFER',
