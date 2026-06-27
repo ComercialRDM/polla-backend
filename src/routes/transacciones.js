@@ -7,6 +7,17 @@ const { resolverAtribucion } = require('../services/referidosService');
 const { obtenerIp } = require('../utils/request');
 const { registrarEvento } = require('../services/auditoriaService');
 const { obtenerBancosPSE, crearTransaccionPSE, crearTransaccionBancolombiaTransfer } = require('../services/wompiApiService');
+const { generarTokenUsuario } = require('../utils/userTokens');
+
+// El comprador queda con sesión iniciada de una vez (la cuenta ya existe desde
+// que se crea la transacción, vía resolverUsuarioComprador). `usuario` viene
+// de un SELECT *, así que se selecciona solo lo mismo que ya devuelve
+// /login — nunca password_hash, foto_imagen (binario) ni IDs internos.
+function usuarioParaSesion(usuario) {
+    const { id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token } = usuario;
+    const usuarioSeguro = { id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token };
+    return { usuario: usuarioSeguro, token: generarTokenUsuario(usuario) };
+}
 
 const DOCUMENTO_TIPOS_VALIDOS = new Set(['CC', 'CE', 'NIT']);
 
@@ -126,6 +137,7 @@ router.post('/crear-link', async (req, res) => {
             await client.query('COMMIT');
             return res.json({
                 success: true,
+                ...usuarioParaSesion(usuario),
                 widget: {
                     publicKey: WOMPI_PUBLIC_KEY,
                     currency: 'COP',
@@ -170,6 +182,7 @@ router.post('/crear-link', async (req, res) => {
 
         return res.json({
             success: true,
+            ...usuarioParaSesion(usuario),
             widget: {
                 publicKey: WOMPI_PUBLIC_KEY,
                 currency: 'COP',
@@ -260,6 +273,7 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
 
         return res.json({
             success: true,
+            ...usuarioParaSesion(usuario),
             transaccion_id: transaccionRows[0].id,
             mensaje: 'Tu comprobante fue recibido. Apenas el equipo de La Retoucherie confirme el pago, recibirás tu bono por correo.',
         });
@@ -367,7 +381,7 @@ router.post('/crear-pse', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
+        return res.json({ success: true, ...usuarioParaSesion(usuario), redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
     } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         console.error('Error en crear-pse:', err.response?.data || err.message);
@@ -440,7 +454,7 @@ router.post('/crear-bancolombia', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
+        return res.json({ success: true, ...usuarioParaSesion(usuario), redirect_url: asyncPaymentUrl, transaccion_id: transaccion.id });
     } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         console.error('Error en crear-bancolombia:', err.response?.data || err.message);
