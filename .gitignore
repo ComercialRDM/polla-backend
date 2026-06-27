@@ -1,3 +1,5 @@
 node_modules/
 .env
 db/pgdata/
+.ga4-credentials.json
+loadtest/data/

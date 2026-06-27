@@ -1,5 +1,11 @@
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('./manychatService');
+const { ejecutarConConcurrencia } = require('../utils/concurrencia');
+
+// Tope de envíos simultáneos a la API de ManyChat: lo suficientemente alto para
+// no tardar minutos en avisar a miles de participantes (antes era secuencial,
+// uno por uno), pero acotado para no disparar el propio rate limit de ManyChat.
+const CONCURRENCIA_MANYCHAT = 20;
 
 const INTERVALO_MS = 60 * 1000;
 
@@ -26,7 +32,7 @@ async function revisarInicioPartidos() {
             const mensaje = `⚽ ¡Ya comenzó ${partido.equipo_local} vs ${partido.equipo_visitante}! `
                 + `Sigue el marcador y revisa tu pronóstico en la Polla Mundialista de La Retoucherie. ¡Mucha suerte! 🇨🇴`;
 
-            for (const participante of participantes) {
+            await ejecutarConConcurrencia(participantes, async (participante) => {
                 try {
                     const { subscriberId } = await enviarMensajeManyChat({
                         celular: participante.celular,
@@ -39,7 +45,7 @@ async function revisarInicioPartidos() {
                 } catch (err) {
                     console.error(`Error notificando inicio de partido a ${participante.celular}:`, err.response?.data || err.message);
                 }
-            }
+            }, CONCURRENCIA_MANYCHAT);
 
             await pool.query('UPDATE partidos SET notificado_inicio = TRUE WHERE id = $1', [partido.id]);
         } catch (err) {
@@ -63,7 +69,7 @@ function iniciarMonitorPartidos() {
 async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisitanteNuevo }) {
     const mensaje = `⚽ ¡GOL! El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. ¡Estás ganando en la Polla Retoucherie! Mantén los dedos cruzados 🤞🇨🇴`;
 
-    for (const ganador of ganadores) {
+    await ejecutarConConcurrencia(ganadores, async (ganador) => {
         try {
             const { subscriberId } = await enviarMensajeManyChat({
                 celular: ganador.celular,
@@ -76,7 +82,7 @@ async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisit
         } catch (err) {
             console.error(`Error enviando notificación ManyChat a ${ganador.celular}:`, err.message);
         }
-    }
+    }, CONCURRENCIA_MANYCHAT);
 }
 
 module.exports = { iniciarMonitorPartidos, notificarGanadoresDelGol };
