@@ -975,22 +975,22 @@ router.get('/ranking-global', async (req, res) => {
                                  AND pa.goles_local IS NOT NULL
                             THEN CASE pa.fase
                                 WHEN 'grupos'        THEN 100
-                                WHEN 'dieciseisavos' THEN 120
+                                WHEN 'dieciseisavos' THEN 200
                                 WHEN 'octavos'       THEN 200
-                                WHEN 'cuartos'       THEN 250
-                                WHEN 'semifinal'     THEN 800
-                                WHEN 'final'         THEN 2000
+                                WHEN 'cuartos'       THEN 600
+                                WHEN 'semifinal'     THEN 600
+                                WHEN 'final'         THEN 1000
                                 ELSE 100 END
                             WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
                                  AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
                                  AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
                             THEN CASE pa.fase
                                 WHEN 'grupos'        THEN 50
-                                WHEN 'dieciseisavos' THEN 60
+                                WHEN 'dieciseisavos' THEN 100
                                 WHEN 'octavos'       THEN 100
-                                WHEN 'cuartos'       THEN 125
-                                WHEN 'semifinal'     THEN 400
-                                WHEN 'final'         THEN 1000
+                                WHEN 'cuartos'       THEN 300
+                                WHEN 'semifinal'     THEN 300
+                                WHEN 'final'         THEN 500
                                 ELSE 50 END
                             ELSE 0
                         END
@@ -1137,25 +1137,25 @@ router.get('/ranking-final', async (req, res) => {
                         CASE
                             WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL
                             THEN CASE pa.fase
-                                WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
-                                WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100 END
+                                WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
+                                WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100 END
                             WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
                                  AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
                                  AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
                             THEN CASE pa.fase
-                                WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
-                                WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50 END
+                                WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
+                                WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50 END
                             ELSE 0
                         END
                     ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
                     COUNT(CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1 END) AS exactos_total,
                     COALESCE(SUM(
                         CASE
-                            WHEN pa.fase = 'final' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 2000
+                            WHEN pa.fase = 'final' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1000
                             WHEN pa.fase = 'final' AND pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
                                  AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
                                  AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                            THEN 1000
+                            THEN 500
                             ELSE 0
                         END
                     ), 0) AS puntos_final,

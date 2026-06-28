@@ -4,6 +4,7 @@ const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
 const { obtenerSaldoUsuario } = require('../services/walletService');
 const { CUPO_VALOR } = require('../config/planes');
+const { puntajeExacto, puntajeTendencia } = require('../config/puntajesFase');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
@@ -20,12 +21,6 @@ const COSTO_CUPO_FASE = {
     cuartos: 2, semifinal: 2, final: 4,
 };
 
-function puntajeExacto(fase) {
-    return ({ grupos: 100, dieciseisavos: 120, octavos: 200, cuartos: 250, semifinal: 800, final: 2000 })[fase] ?? 100;
-}
-function puntajeTendencia(fase) {
-    return ({ grupos: 50, dieciseisavos: 60, octavos: 100, cuartos: 125, semifinal: 400, final: 1000 })[fase] ?? 50;
-}
 
 // GET /api/polla/bono/:token - imagen del bono digital (PNG), pública para poder enviarla por WhatsApp
 router.get('/bono/:token', async (req, res) => {
@@ -603,11 +598,11 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                              AND pr.goles_visitante = p.goles_visitante
                         THEN CASE p.fase
                             WHEN 'grupos'        THEN 100
-                            WHEN 'dieciseisavos' THEN 120
+                            WHEN 'dieciseisavos' THEN 200
                             WHEN 'octavos'       THEN 200
-                            WHEN 'cuartos'       THEN 250
-                            WHEN 'semifinal'     THEN 800
-                            WHEN 'final'         THEN 2000
+                            WHEN 'cuartos'       THEN 600
+                            WHEN 'semifinal'     THEN 600
+                            WHEN 'final'         THEN 1000
                             ELSE 100
                         END
                         WHEN p.estado = 'cerrado'
@@ -619,11 +614,11 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                              AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
                         THEN CASE p.fase
                             WHEN 'grupos'        THEN 50
-                            WHEN 'dieciseisavos' THEN 60
+                            WHEN 'dieciseisavos' THEN 100
                             WHEN 'octavos'       THEN 100
-                            WHEN 'cuartos'       THEN 125
-                            WHEN 'semifinal'     THEN 400
-                            WHEN 'final'         THEN 1000
+                            WHEN 'cuartos'       THEN 300
+                            WHEN 'semifinal'     THEN 300
+                            WHEN 'final'         THEN 500
                             ELSE 50
                         END
                         ELSE 0
@@ -658,8 +653,8 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                                       AND pr2.goles_local = p2.goles_local
                                       AND pr2.goles_visitante = p2.goles_visitante
                                  THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
-                                     WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100
+                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
+                                     WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100
                                  END
                                  WHEN p2.estado = 'cerrado'
                                       AND (
@@ -669,8 +664,8 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                                       )
                                       AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
                                  THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
-                                     WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50
+                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
+                                     WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50
                                  END
                                  ELSE 0
                              END
@@ -702,8 +697,8 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                                       AND pr2.goles_local = p2.goles_local
                                       AND pr2.goles_visitante = p2.goles_visitante
                                  THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 120 WHEN 'octavos' THEN 200
-                                     WHEN 'cuartos' THEN 250 WHEN 'semifinal' THEN 800 WHEN 'final' THEN 2000 ELSE 100
+                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
+                                     WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100
                                  END
                                  WHEN p2.estado = 'cerrado'
                                       AND (
@@ -713,8 +708,8 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                                       )
                                       AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
                                  THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 60 WHEN 'octavos' THEN 100
-                                     WHEN 'cuartos' THEN 125 WHEN 'semifinal' THEN 400 WHEN 'final' THEN 1000 ELSE 50
+                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
+                                     WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50
                                  END
                                  ELSE 0
                              END
@@ -786,11 +781,11 @@ router.get('/mis-pronosticos', usuarioAuth, async (req, res) => {
                          AND pr.goles_visitante = p.goles_visitante
                         THEN CASE p.fase
                             WHEN 'grupos'        THEN 100
-                            WHEN 'dieciseisavos' THEN 120
+                            WHEN 'dieciseisavos' THEN 200
                             WHEN 'octavos'       THEN 200
-                            WHEN 'cuartos'       THEN 250
-                            WHEN 'semifinal'     THEN 800
-                            WHEN 'final'         THEN 2000
+                            WHEN 'cuartos'       THEN 600
+                            WHEN 'semifinal'     THEN 600
+                            WHEN 'final'         THEN 1000
                             ELSE 100
                         END
                     WHEN p.estado = 'cerrado'
@@ -802,11 +797,11 @@ router.get('/mis-pronosticos', usuarioAuth, async (req, res) => {
                          AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
                         THEN CASE p.fase
                             WHEN 'grupos'        THEN 50
-                            WHEN 'dieciseisavos' THEN 60
+                            WHEN 'dieciseisavos' THEN 100
                             WHEN 'octavos'       THEN 100
-                            WHEN 'cuartos'       THEN 125
-                            WHEN 'semifinal'     THEN 400
-                            WHEN 'final'         THEN 1000
+                            WHEN 'cuartos'       THEN 300
+                            WHEN 'semifinal'     THEN 300
+                            WHEN 'final'         THEN 500
                             ELSE 50
                         END
                     WHEN p.estado = 'cerrado' THEN 0
@@ -976,22 +971,22 @@ router.get('/resultados-finales', async (req, res) => {
                                 AND pa.goles_local IS NOT NULL
                            THEN CASE pa.fase
                                WHEN 'grupos'        THEN 100
-                               WHEN 'dieciseisavos' THEN 120
+                               WHEN 'dieciseisavos' THEN 200
                                WHEN 'octavos'       THEN 200
-                               WHEN 'cuartos'       THEN 250
-                               WHEN 'semifinal'     THEN 800
-                               WHEN 'final'         THEN 2000
+                               WHEN 'cuartos'       THEN 600
+                               WHEN 'semifinal'     THEN 600
+                               WHEN 'final'         THEN 1000
                                ELSE 100 END
                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
                            THEN CASE pa.fase
                                WHEN 'grupos'        THEN 50
-                               WHEN 'dieciseisavos' THEN 60
+                               WHEN 'dieciseisavos' THEN 100
                                WHEN 'octavos'       THEN 100
-                               WHEN 'cuartos'       THEN 125
-                               WHEN 'semifinal'     THEN 400
-                               WHEN 'final'         THEN 1000
+                               WHEN 'cuartos'       THEN 300
+                               WHEN 'semifinal'     THEN 300
+                               WHEN 'final'         THEN 500
                                ELSE 50 END
                            ELSE 0
                        END
