@@ -179,6 +179,83 @@ router.get('/reportes', async (req, res) => {
     }
 });
 
+const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+// GET /api/admin/redenciones/resumen?fecha=YYYY-MM-DD - totales del día por sede
+// (para el cierre de caja diario). Sin "fecha", usa el día de hoy (hora Bogotá).
+router.get('/redenciones/resumen', async (req, res) => {
+    const fecha = req.query.fecha;
+    if (fecha && !FECHA_REGEX.test(fecha)) {
+        return res.status(400).json({ success: false, error: 'Formato de fecha inválido (YYYY-MM-DD)' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT COALESCE(r.sede, 'Sin sede') AS sede,
+                    COUNT(*)::int AS cantidad,
+                    COALESCE(SUM(r.monto), 0)::bigint AS total
+             FROM redenciones r
+             WHERE date(r.created_at AT TIME ZONE 'America/Bogota') = COALESCE($1::date, (now() AT TIME ZONE 'America/Bogota')::date)
+             GROUP BY sede
+             ORDER BY sede`,
+            [fecha || null]
+        );
+
+        const porSede = rows.map((r) => ({ sede: r.sede, cantidad: r.cantidad, total: Number(r.total) }));
+        const totalGeneral = porSede.reduce((acc, r) => acc + r.total, 0);
+        const cantidadGeneral = porSede.reduce((acc, r) => acc + r.cantidad, 0);
+
+        return res.json({ success: true, fecha: fecha || null, porSede, totalGeneral, cantidadGeneral });
+    } catch (err) {
+        console.error('Error en /admin/redenciones/resumen:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/redenciones/export?desde=YYYY-MM-DD&hasta=YYYY-MM-DD - listado
+// detallado de canjes para auditar contra los servicios reclamados en cada sede.
+router.get('/redenciones/export', async (req, res) => {
+    const { desde, hasta } = req.query;
+    if (!desde || !hasta || !FECHA_REGEX.test(desde) || !FECHA_REGEX.test(hasta)) {
+        return res.status(400).json({ success: false, error: 'Faltan o son inválidas "desde"/"hasta" (YYYY-MM-DD)' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `SELECT r.created_at, r.sede, r.monto, r.saldo_antes, r.saldo_despues,
+                    u.nombre, u.celular, t.valor_pagado, t.saldo_bono, t.token_acceso,
+                    lu.nombre_local, lu.usuario AS local_usuario
+             FROM redenciones r
+             JOIN transacciones t ON t.id = r.transaccion_id
+             JOIN usuarios u ON u.id = t.usuario_id
+             JOIN local_usuarios lu ON lu.id = r.local_usuario_id
+             WHERE date(r.created_at AT TIME ZONE 'America/Bogota') BETWEEN $1::date AND $2::date
+             ORDER BY r.created_at ASC`,
+            [desde, hasta]
+        );
+
+        return res.json({
+            success: true,
+            redenciones: rows.map((r) => ({
+                fechaHora: r.created_at,
+                sede: r.sede || 'Sin sede',
+                nombre: r.nombre,
+                celular: r.celular,
+                monto: Number(r.monto),
+                saldoAntes: Number(r.saldo_antes),
+                saldoDespues: Number(r.saldo_despues),
+                valorPagado: Number(r.valor_pagado),
+                saldoBono: Number(r.saldo_bono),
+                tokenAcceso: r.token_acceso,
+                atendidoPor: r.nombre_local || r.local_usuario,
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/redenciones/export:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/pendientes
 router.get('/pendientes', async (req, res) => {
     try {

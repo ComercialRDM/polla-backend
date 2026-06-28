@@ -6,6 +6,9 @@ const QRCode = require('qrcode');
 const pool = require('../db');
 const localAuth = require('../middleware/localAuth');
 const { generarToken } = require('../utils/adminTokens');
+const { SEDES } = require('../config/sedes');
+const { registrarEvento } = require('../services/auditoriaService');
+const { obtenerIp } = require('../utils/request');
 
 const router = express.Router();
 
@@ -174,7 +177,7 @@ router.get('/bono/:token', async (req, res) => {
 
         // Historial de redenciones anteriores
         const { rows: redenciones } = await pool.query(
-            `SELECT r.monto, r.saldo_antes, r.saldo_despues, r.created_at,
+            `SELECT r.monto, r.saldo_antes, r.saldo_despues, r.created_at, r.sede,
                     lu.nombre_local, lu.usuario AS local_usuario
              FROM redenciones r
              JOIN local_usuarios lu ON lu.id = r.local_usuario_id
@@ -202,13 +205,19 @@ router.get('/bono/:token', async (req, res) => {
     }
 });
 
-// POST /api/local/bono/redimir - redención parcial o total del saldo del bono
+// POST /api/local/bono/redimir - redención parcial o total del saldo del bono.
+// Único endpoint de canje (antes existía también /bono/consumir, todo o nada
+// y sin trazabilidad de sede/usuario — se unificó aquí para no tener dos
+// flujos distintos para la misma operación).
 router.post('/bono/redimir', async (req, res) => {
-    const { token_acceso, monto } = req.body;
+    const { token_acceso, monto, sede } = req.body;
     const localUsuarioId = req.local?.id;
 
     if (!token_acceso || !monto || Number(monto) <= 0) {
         return res.status(400).json({ success: false, error: 'Datos inválidos' });
+    }
+    if (!SEDES.includes(sede)) {
+        return res.status(400).json({ success: false, error: 'Selecciona una sede válida' });
     }
 
     const montoInt = Math.round(Number(monto));
@@ -259,12 +268,22 @@ router.post('/bono/redimir', async (req, res) => {
         );
 
         await client.query(
-            `INSERT INTO redenciones (transaccion_id, local_usuario_id, monto, saldo_antes, saldo_despues)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [b.id, localUsuarioId, montoInt, saldoAntes, saldoDespues]
+            `INSERT INTO redenciones (transaccion_id, local_usuario_id, monto, saldo_antes, saldo_despues, sede)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [b.id, localUsuarioId, montoInt, saldoAntes, saldoDespues, sede]
         );
 
         await client.query('COMMIT');
+
+        await registrarEvento({
+            tabla: 'transacciones',
+            registroId: b.id,
+            accion: 'redimir_bono',
+            actor: String(localUsuarioId),
+            despues: { monto: montoInt, saldo_antes: saldoAntes, saldo_despues: saldoDespues, sede },
+            ip: obtenerIp(req),
+            userAgent: req.headers['user-agent'],
+        });
 
         return res.json({
             success: true,
@@ -279,48 +298,6 @@ router.post('/bono/redimir', async (req, res) => {
         return res.status(500).json({ success: false, error: 'Error interno' });
     } finally {
         client.release();
-    }
-});
-
-// POST /api/local/bono/consumir - marca el bono como usado en el local (escaneo del QR)
-router.post('/bono/consumir', async (req, res) => {
-    const { token_acceso } = req.body;
-    if (!token_acceso) {
-        return res.status(400).json({ success: false, error: 'Falta token_acceso' });
-    }
-
-    try {
-        const { rows } = await pool.query(
-            `UPDATE transacciones SET bono_consumido = TRUE, bono_consumido_en = now()
-             WHERE token_acceso = $1 AND estado_pago = 'APROBADO' AND bono_consumido = FALSE
-             RETURNING id`,
-            [token_acceso]
-        );
-
-        if (rows.length === 0) {
-            const { rows: existentes } = await pool.query(
-                `SELECT t.estado_pago, t.bono_consumido, t.bono_consumido_en, u.nombre
-                 FROM transacciones t JOIN usuarios u ON u.id = t.usuario_id
-                 WHERE t.token_acceso = $1`,
-                [token_acceso]
-            );
-
-            if (existentes.length === 0) {
-                return res.status(404).json({ success: false, error: 'Bono no encontrado' });
-            }
-            if (existentes[0].estado_pago !== 'APROBADO') {
-                return res.status(409).json({ success: false, error: 'Este bono no está aprobado' });
-            }
-            return res.status(409).json({
-                success: false,
-                error: `Este bono ya fue usado por ${existentes[0].nombre} el ${new Date(existentes[0].bono_consumido_en).toLocaleString('es-CO')}`,
-            });
-        }
-
-        return res.json({ success: true });
-    } catch (err) {
-        console.error('Error en /local/bono/consumir:', err);
-        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 

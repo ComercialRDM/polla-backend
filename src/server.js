@@ -309,6 +309,10 @@ app.listen(PORT, async () => {
                 created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         `);
+        // Sede física donde se hizo el canje (Aranjuez/Viva/Buenavista), para
+        // reportes de cierre del día y auditoría — independiente de qué cuenta
+        // de local lo haga, por si una misma cuenta atiende varias sedes.
+        await pool.query(`ALTER TABLE redenciones ADD COLUMN IF NOT EXISTS sede TEXT`);
     } catch (err) {
         console.error('Error creando tabla redenciones:', err.message);
     }
