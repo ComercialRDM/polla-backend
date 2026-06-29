@@ -119,6 +119,57 @@ async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoV
 }
 
 /**
+ * Correo personalizado al cerrar un partido: le cuenta a cada participante su
+ * propio resultado (en vez del aviso genérico de "inicio de partido"/"gol" que
+ * antes se mandaba por WhatsApp) y lo invita a comprar más cupos — reemplaza
+ * esas notificaciones con algo que sí motiva la recompra, a costo de correo
+ * (casi gratis) en vez de SMS (caro a esta escala).
+ * @param {{ destinatario: string, nombre: string, equipoLocal: string, equipoVisitante: string, golesLocal: number, golesVisitante: number, prediccionLocal: number, prediccionVisitante: number, puntosGanados: number, cuposDisponibles: number, proximoPartido?: { equipoLocal: string, equipoVisitante: string }, linkCompra: string }} datos
+ */
+async function enviarCorreoResultadoPartido({
+    destinatario, nombre, equipoLocal, equipoVisitante, golesLocal, golesVisitante,
+    prediccionLocal, prediccionVisitante, puntosGanados, cuposDisponibles, proximoPartido, linkCompra,
+}) {
+    const transporter = crearTransporter();
+
+    const acertoExacto = puntosGanados > 0 && prediccionLocal === golesLocal && prediccionVisitante === golesVisitante;
+    const resultadoTexto = puntosGanados === 0
+        ? 'Esta vez no acertaste, ¡pero el Mundial sigue!'
+        : acertoExacto
+            ? `¡Le pegaste exacto y ganaste ${puntosGanados} puntos! 🎯`
+            : `Acertaste la tendencia y ganaste ${puntosGanados} puntos.`;
+
+    const proximoHtml = proximoPartido
+        ? `<p><strong>${proximoPartido.equipoLocal} vs ${proximoPartido.equipoVisitante}</strong> es el siguiente partido disponible en la Polla.</p>`
+        : '';
+
+    const cuposHtml = cuposDisponibles > 0
+        ? `<p>Todavía te quedan <strong>${cuposDisponibles} cupo(s)</strong> sin usar para seguir pronosticando.</p>`
+        : `<p>Ya usaste todos tus cupos — compra un nuevo bono para seguir participando.</p>`;
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #f59e0b;">${equipoLocal} ${golesLocal} - ${golesVisitante} ${equipoVisitante}</h1>
+        <p>Hola ${nombre}, tu pronóstico fue <strong>${prediccionLocal} - ${prediccionVisitante}</strong>. ${resultadoTexto}</p>
+        ${cuposHtml}
+        ${proximoHtml}
+        <p style="text-align: center; margin: 30px 0;">
+            <a href="${linkCompra}" style="background: linear-gradient(90deg, #f59e0b, #f97316); color: #18181b; font-weight: bold; padding: 14px 28px; border-radius: 8px; text-decoration: none; display: inline-block;">
+                Comprar mi bono
+            </a>
+        </p>
+        <p style="font-size: 12px; color: #71717a;">Si el botón no funciona, copia y pega este link en tu navegador: ${linkCompra}</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `${equipoLocal} ${golesLocal}-${golesVisitante} ${equipoVisitante} — así te fue en la Polla`,
+        html,
+    });
+}
+
+/**
  * Envía el respaldo periódico de la base de datos (JSON comprimido) al correo
  * del administrador.
  * @param {{ destinatario: string, filename: string, buffer: Buffer, resumen: Record<string, number> }} datos
@@ -238,4 +289,4 @@ async function enviarCorreoResetLocalPassword({ destinatario, nombre, tempPass }
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword };
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword };

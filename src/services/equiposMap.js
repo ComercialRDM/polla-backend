@@ -67,4 +67,20 @@ function coincideEquipo(nombreLocal, nombreApi) {
     return candidatos.some((candidato) => normalizar(candidato) === apiNorm);
 }
 
-module.exports = { coincideEquipo };
+// Índice inverso (se construye una sola vez): nombre normalizado de la API -> nombre en español
+const NOMBRE_ESPANOL_POR_API = {};
+for (const [nombreEspanol, alias] of Object.entries(NOMBRES_EQUIVALENTES)) {
+    for (const nombreApi of alias) {
+        NOMBRE_ESPANOL_POR_API[normalizar(nombreApi)] = nombreEspanol;
+    }
+}
+
+// Traduce el nombre de un equipo devuelto por football-data.org a nuestro
+// nombre en español. Si no hay equivalencia conocida, devuelve el nombre de
+// la API tal cual (mejor mostrar el nombre en inglés que perder el partido).
+function nombreEspanol(nombreApi) {
+    if (!nombreApi) return nombreApi;
+    return NOMBRE_ESPANOL_POR_API[normalizar(nombreApi)] || nombreApi;
+}
+
+module.exports = { coincideEquipo, nombreEspanol };

@@ -1,88 +1,86 @@
 const pool = require('../db');
-const { enviarMensajeManyChat } = require('./manychatService');
+const { enviarCorreoResultadoPartido } = require('./emailService');
+const { obtenerSaldoUsuario } = require('./walletService');
+const { puntajeExacto, puntajeTendencia } = require('../config/puntajesFase');
 const { ejecutarConConcurrencia } = require('../utils/concurrencia');
 
-// Tope de envíos simultáneos a la API de ManyChat: lo suficientemente alto para
-// no tardar minutos en avisar a miles de participantes (antes era secuencial,
-// uno por uno), pero acotado para no disparar el propio rate limit de ManyChat.
-const CONCURRENCIA_MANYCHAT = 20;
-
-const INTERVALO_MS = 60 * 1000;
+const CONCURRENCIA_CORREOS = 10;
 
 /**
- * Revisa los partidos activos que ya alcanzaron su hora de inicio y, la primera vez,
- * avisa por WhatsApp a todos los participantes con bono aprobado para ese partido.
+ * Manda el correo de "resultado del partido + recompra" a cada participante
+ * real (excluye pruebas/especiales) de un partido recién cerrado — reemplaza
+ * las notificaciones de inicio de partido/gol que antes se mandaban por
+ * WhatsApp (ver auditoria_eventos / decisión de migrar a correo por costo).
+ * Es idempotente vía la tabla recompra_enviada: no reenvía si ya se mandó
+ * para ese usuario/partido, sin importar si el cierre vino del panel admin
+ * (PATCH /admin/partidos/:id) o del monitor automático de marcadores
+ * (marcadoresService.js) — ambos llaman a esta misma función.
+ * @param {{ id: number, equipo_local: string, equipo_visitante: string, goles_local: number, goles_visitante: number, fase: string }} partido
  */
-async function revisarInicioPartidos() {
-    const { rows: partidos } = await pool.query(
-        `SELECT * FROM partidos
-         WHERE estado = 'activo' AND notificado_inicio = FALSE AND fecha_hora_inicio <= now()`
+async function enviarCorreosResultadoPartido(partido) {
+    if (partido.goles_local === null || partido.goles_visitante === null) return;
+
+    const { rows: participantes } = await pool.query(
+        `SELECT pr.usuario_id, pr.goles_local AS pred_local, pr.goles_visitante AS pred_visitante,
+                u.nombre, u.correo
+         FROM pronosticos pr
+         JOIN usuarios u ON u.id = pr.usuario_id
+         LEFT JOIN transacciones t ON t.id = pr.transaccion_id
+         WHERE pr.partido_id = $1
+           AND u.correo IS NOT NULL
+           AND COALESCE(t.es_test, FALSE) = FALSE
+           AND COALESCE(t.es_especial, FALSE) = FALSE`,
+        [partido.id]
     );
+    if (participantes.length === 0) return;
 
-    for (const partido of partidos) {
-        try {
-            const { rows: participantes } = await pool.query(
-                `SELECT DISTINCT u.id, u.nombre, u.celular, u.manychat_subscriber_id
-                 FROM transacciones t
-                 JOIN usuarios u ON u.id = t.usuario_id
-                 WHERE t.partido_id = $1 AND t.estado_pago = 'APROBADO'`,
-                [partido.id]
-            );
-
-            const mensaje = `⚽ ¡Ya comenzó ${partido.equipo_local} vs ${partido.equipo_visitante}! `
-                + `Sigue el marcador y revisa tu pronóstico en la Polla Mundialista de La Retoucherie. ¡Mucha suerte! 🇨🇴`;
-
-            await ejecutarConConcurrencia(participantes, async (participante) => {
-                try {
-                    const { subscriberId } = await enviarMensajeManyChat({
-                        celular: participante.celular,
-                        mensaje,
-                        subscriberId: participante.manychat_subscriber_id,
-                    });
-                    if (subscriberId && !participante.manychat_subscriber_id) {
-                        await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), participante.id]);
-                    }
-                } catch (err) {
-                    console.error(`Error notificando inicio de partido a ${participante.celular}:`, err.response?.data || err.message);
-                }
-            }, CONCURRENCIA_MANYCHAT);
-
-            await pool.query('UPDATE partidos SET notificado_inicio = TRUE WHERE id = $1', [partido.id]);
-        } catch (err) {
-            console.error(`Error procesando notificación de inicio para partido ${partido.id}:`, err.message);
-        }
+    const pendientes = [];
+    for (const p of participantes) {
+        const { rows: insertado } = await pool.query(
+            `INSERT INTO recompra_enviada (partido_id, usuario_id) VALUES ($1, $2)
+             ON CONFLICT (partido_id, usuario_id) DO NOTHING RETURNING id`,
+            [partido.id, p.usuario_id]
+        );
+        if (insertado.length > 0) pendientes.push(p);
     }
-}
+    if (pendientes.length === 0) return;
 
-/**
- * Inicia la revisión periódica de partidos que están por comenzar.
- */
-function iniciarMonitorPartidos() {
-    setInterval(() => {
-        revisarInicioPartidos().catch((err) => console.error('Error en revisarInicioPartidos:', err.message));
-    }, INTERVALO_MS);
-}
+    const { rows: proximoRows } = await pool.query(
+        `SELECT equipo_local, equipo_visitante FROM partidos
+         WHERE estado = 'activo' AND fecha_hora_inicio > now()
+         ORDER BY fecha_hora_inicio ASC LIMIT 1`
+    );
+    const proximoPartido = proximoRows[0]
+        ? { equipoLocal: proximoRows[0].equipo_local, equipoVisitante: proximoRows[0].equipo_visitante }
+        : null;
+    const linkCompra = `${process.env.FRONTEND_URL}/comprar`;
 
-/**
- * Envía por ManyChat la notificación de gol a los usuarios que están acertando el marcador actual.
- */
-async function notificarGanadoresDelGol({ ganadores, golesLocalNuevo, golesVisitanteNuevo }) {
-    const mensaje = `⚽ ¡GOL! El partido va ${golesLocalNuevo}-${golesVisitanteNuevo}. ¡Estás ganando en la Polla Retoucherie! Mantén los dedos cruzados 🤞🇨🇴`;
-
-    await ejecutarConConcurrencia(ganadores, async (ganador) => {
+    await ejecutarConConcurrencia(pendientes, async (p) => {
         try {
-            const { subscriberId } = await enviarMensajeManyChat({
-                celular: ganador.celular,
-                mensaje,
-                subscriberId: ganador.manychat_subscriber_id,
+            const esExacto = p.pred_local === partido.goles_local && p.pred_visitante === partido.goles_visitante;
+            const esTendencia = !esExacto
+                && Math.sign(p.pred_local - p.pred_visitante) === Math.sign(partido.goles_local - partido.goles_visitante);
+            const puntosGanados = esExacto ? puntajeExacto(partido.fase) : esTendencia ? puntajeTendencia(partido.fase) : 0;
+            const { cuposDisponibles } = await obtenerSaldoUsuario(p.usuario_id);
+
+            await enviarCorreoResultadoPartido({
+                destinatario: p.correo,
+                nombre: p.nombre,
+                equipoLocal: partido.equipo_local,
+                equipoVisitante: partido.equipo_visitante,
+                golesLocal: partido.goles_local,
+                golesVisitante: partido.goles_visitante,
+                prediccionLocal: p.pred_local,
+                prediccionVisitante: p.pred_visitante,
+                puntosGanados,
+                cuposDisponibles,
+                proximoPartido,
+                linkCompra,
             });
-            if (subscriberId && !ganador.manychat_subscriber_id) {
-                await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), ganador.usuario_id]);
-            }
         } catch (err) {
-            console.error(`Error enviando notificación ManyChat a ${ganador.celular}:`, err.message);
+            console.error(`Error enviando correo de resultado a ${p.correo}:`, err.message);
         }
-    }, CONCURRENCIA_MANYCHAT);
+    }, CONCURRENCIA_CORREOS);
 }
 
-module.exports = { iniciarMonitorPartidos, notificarGanadoresDelGol };
+module.exports = { enviarCorreosResultadoPartido };

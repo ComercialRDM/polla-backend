@@ -14,6 +14,7 @@ const { registrarEvento } = require('../services/auditoriaService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
+const { enviarCorreosResultadoPartido } = require('../services/notificacionesService');
 
 const router = express.Router();
 
@@ -458,6 +459,17 @@ router.patch('/partidos/:id', async (req, res) => {
         invalidate(`ranking:${id}`);
         invalidate(`resumen:${id}`);
         notificar(id);
+
+        // Correo de "resultado del partido + recompra" (reemplaza las notificaciones
+        // de inicio de partido/gol que antes se mandaban por WhatsApp). Fuera de la
+        // transacción a propósito: no debe bloquear la respuesta ni revertir el
+        // cierre del partido si falla el correo de alguien. La función es
+        // idempotente (tabla recompra_enviada), así que reintentar el cierre no
+        // duplica envíos.
+        if (partido.estado === 'cerrado') {
+            enviarCorreosResultadoPartido(partido)
+                .catch((err) => console.error('Error enviando correos de resultado de partido:', err.message));
+        }
 
         return res.json({ success: true, partido, bonoColombia });
     } catch (err) {

@@ -20,8 +20,8 @@ const passkeysRouter  = require('./routes/passkeys');
 const influencersRouter = require('./routes/influencers');
 const referidosRouter = require('./routes/referidos');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
-const { iniciarMonitorPartidos } = require('./services/notificacionesService');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
+const { iniciarSincronizacionMundial } = require('./services/sincronizacionMundialService');
 
 const app = express();
 
@@ -388,6 +388,33 @@ app.listen(PORT, async () => {
         console.error('Error creando tabla bonos_colombia:', err.message);
     }
 
+    // Control de envío del correo de "resultado del partido + recompra" (se manda
+    // una sola vez por usuario/partido al cerrar el partido, vía PATCH
+    // /admin/partidos/:id). El UNIQUE evita reenviarlo si el cierre se reintenta
+    // o si el admin corrige el marcador después.
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS recompra_enviada (
+                id          SERIAL PRIMARY KEY,
+                partido_id  INTEGER NOT NULL REFERENCES partidos(id),
+                usuario_id  INTEGER NOT NULL REFERENCES usuarios(id),
+                enviado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (partido_id, usuario_id)
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla recompra_enviada:', err.message);
+    }
+
+    // ID del partido en football-data.org, para que la sincronización automática
+    // del calendario (sincronizacionMundialService.js) pueda hacer upsert sin
+    // crear duplicados ni pisar partidos creados manualmente desde el admin.
+    try {
+        await pool.query(`ALTER TABLE partidos ADD COLUMN IF NOT EXISTS external_id INTEGER UNIQUE`);
+    } catch (err) {
+        console.error('Error aplicando migración de partidos.external_id:', err.message);
+    }
+
     // Registro público de influencers/creadores de contenido: solicitud que
     // queda pendiente hasta que el admin les cree manualmente el Bono Especial
     // desde la sección "Influenciadores" del panel.
@@ -511,6 +538,6 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de user_agent en auditoria_eventos:', err.message);
     }
 
-    iniciarMonitorPartidos();
     iniciarMonitorMarcadores();
+    iniciarSincronizacionMundial();
 });

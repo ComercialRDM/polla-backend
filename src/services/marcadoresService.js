@@ -1,8 +1,7 @@
 const pool = require('../db');
 const { obtenerPartidosMundial } = require('./footballDataService');
 const { coincideEquipo } = require('./equiposMap');
-const { calcularRanking } = require('./rankingService');
-const { notificarGanadoresDelGol } = require('./notificacionesService');
+const { enviarCorreosResultadoPartido } = require('./notificacionesService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 
@@ -62,10 +61,18 @@ async function actualizarMarcadores() {
         invalidate(`resumen:${partido.id}`);
         notificar(partido.id);
 
-        if (marcadorCambio) {
-            const ranking = await calcularRanking(partido.id);
-            notificarGanadoresDelGol({ ganadores: ranking.ganadores, golesLocalNuevo: golesLocal, golesVisitanteNuevo: golesVisitante })
-                .catch((err) => console.error('Error notificando ganadores del gol:', err.message));
+        // Correo de "resultado del partido + recompra" solo al CERRAR el partido
+        // (ya no se notifica cada gol por WhatsApp — el marcador en vivo ya se ve
+        // gratis en el dashboard vía SSE, ver notificar() arriba).
+        if (nuevoEstado === 'cerrado' && estadoCambio) {
+            enviarCorreosResultadoPartido({
+                id: partido.id,
+                equipo_local: partido.equipo_local,
+                equipo_visitante: partido.equipo_visitante,
+                fase: partido.fase,
+                goles_local: golesLocal,
+                goles_visitante: golesVisitante,
+            }).catch((err) => console.error('Error enviando correos de resultado de partido:', err.message));
         }
     }
 }

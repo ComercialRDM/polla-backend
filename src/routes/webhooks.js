@@ -4,7 +4,6 @@ const pool = require('../db');
 const { validarFirmaWebhook } = require('../services/wompiService');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { calcularRanking } = require('../services/rankingService');
-const { notificarGanadoresDelGol } = require('../services/notificacionesService');
 const { registrarEvento } = require('../services/auditoriaService');
 const { obtenerIp } = require('../utils/request');
 
@@ -149,10 +148,6 @@ router.post('/partido-en-vivo', async (req, res) => {
 
         // Ranking actualizado con la regla de desempate por fecha_registro ASC
         const ranking = await calcularRanking(partido.id);
-
-        // Notificación de gol vía ManyChat para quienes ahora aciertan el marcador (no bloquea la respuesta)
-        notificarGanadoresDelGol({ ganadores: ranking.ganadores, golesLocalNuevo, golesVisitanteNuevo })
-            .catch((err) => console.error('Error notificando ganadores del gol:', err));
 
         return res.status(200).json({ success: true, cambio: true, ranking });
     } catch (err) {
