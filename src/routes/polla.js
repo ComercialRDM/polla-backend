@@ -131,7 +131,8 @@ router.get('/info', async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token
+            `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token,
+                    t.valor_pagado, t.saldo_bono, t.attribution_group
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -143,7 +144,7 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token } = rows[0];
+        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -178,6 +179,9 @@ router.get('/info', async (req, res) => {
             es_especial,
             equipos_favoritos: equipos_favoritos || [],
             calendario_token,
+            valor_pagado,
+            saldo_bono,
+            attribution_group,
             cupos_totales: saldo.cuposTotales,
             cupos_usados: saldo.cuposUsados,
             cupos_disponibles: saldo.cuposDisponibles,

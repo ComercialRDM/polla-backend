@@ -721,6 +721,111 @@ router.patch('/influencers/registros/:id', async (req, res) => {
     }
 });
 
+// GET /api/admin/ventas-por-canal?fecha_inicio=&fecha_fin= - resumen de
+// ventas agrupado por attribution_group (email, sms, whatsapp, influencer,
+// friend, paid_ads, organic_social, organic_search, direct, referral). Las
+// fechas son opcionales: sin ellas, trae todo el historico.
+router.get('/ventas-por-canal', async (req, res) => {
+    const { fecha_inicio, fecha_fin } = req.query;
+    try {
+        const condiciones = [`estado_pago = 'APROBADO'`, `es_test = FALSE`];
+        const valores = [];
+        if (fecha_inicio && fecha_fin) {
+            valores.push(fecha_inicio, fecha_fin);
+            condiciones.push(`date(fecha_creacion AT TIME ZONE 'America/Bogota') BETWEEN $1::date AND $2::date`);
+        }
+
+        const { rows } = await pool.query(
+            `SELECT COALESCE(attribution_group, 'sin_clasificar') AS attribution_group,
+                    COUNT(*) AS total_ventas,
+                    COALESCE(SUM(valor_pagado), 0) AS ingresos
+             FROM transacciones
+             WHERE ${condiciones.join(' AND ')}
+             GROUP BY attribution_group
+             ORDER BY ingresos DESC`,
+            valores
+        );
+
+        return res.json({
+            success: true,
+            canales: rows.map((r) => ({
+                canal: r.attribution_group,
+                totalVentas: Number(r.total_ventas),
+                ingresos: Number(r.ingresos),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/ventas-por-canal:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/ventas-por-campana - detalle por utm_source/utm_medium/
+// utm_campaign, para bajar un nivel mas que ventas-por-canal (ej. distinguir
+// "campaña julio" de "campaña agosto" dentro del mismo canal email).
+router.get('/ventas-por-campana', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT COALESCE(utm_source, '(sin utm_source)') AS utm_source,
+                    COALESCE(utm_medium, '(sin utm_medium)') AS utm_medium,
+                    COALESCE(utm_campaign, '(sin utm_campaign)') AS utm_campaign,
+                    COUNT(*) AS total_ventas,
+                    COALESCE(SUM(valor_pagado), 0) AS ingresos
+             FROM transacciones
+             WHERE estado_pago = 'APROBADO' AND es_test = FALSE
+               AND (utm_source IS NOT NULL OR utm_medium IS NOT NULL OR utm_campaign IS NOT NULL)
+             GROUP BY utm_source, utm_medium, utm_campaign
+             ORDER BY ingresos DESC`
+        );
+        return res.json({
+            success: true,
+            campanas: rows.map((r) => ({
+                utmSource: r.utm_source,
+                utmMedium: r.utm_medium,
+                utmCampaign: r.utm_campaign,
+                totalVentas: Number(r.total_ventas),
+                ingresos: Number(r.ingresos),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/ventas-por-campana:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/ranking-amigos - ranking de "invita amigos" (referido_por_token),
+// el equivalente a /afiliados pero para el sistema de amigos, que no tiene
+// tabla propia con nombre/comision: se identifica al amigo por la transacción
+// cuyo token_acceso coincide con el referido_por_token de las compras que generó.
+router.get('/ranking-amigos', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT u.id AS usuario_id, u.nombre, u.celular,
+                    COUNT(t.id) AS total_referidos,
+                    COALESCE(SUM(t.valor_pagado), 0) AS ingresos_generados
+             FROM transacciones t
+             JOIN transacciones t_referente ON t_referente.token_acceso = t.referido_por_token
+             JOIN usuarios u ON u.id = t_referente.usuario_id
+             WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE AND t.referido_por_token IS NOT NULL
+             GROUP BY u.id, u.nombre, u.celular
+             ORDER BY ingresos_generados DESC`
+        );
+        return res.json({
+            success: true,
+            amigos: rows.map((r) => ({
+                usuarioId: r.usuario_id,
+                nombre: r.nombre,
+                celular: r.celular,
+                totalReferidos: Number(r.total_referidos),
+                ingresosGenerados: Number(r.ingresos_generados),
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/ranking-amigos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/afiliados - resumen por influencer: código, % comisión,
 // clics, ventas atribuidas y comisión generada/pagada. Vista de control del
 // programa de afiliados (distinta del ranking de puntos de la Polla).

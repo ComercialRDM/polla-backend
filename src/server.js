@@ -415,6 +415,24 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración de partidos.external_id:', err.message);
     }
 
+    // Atribución de marketing por orden (UTMs + canal clasificado), en paralelo
+    // al sistema existente de afiliados/referidos (referido_por_token,
+    // influencer_id, clic_id, que NO se tocan). Ver src/utils/atribucion.js.
+    try {
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS utm_source TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS utm_medium TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS utm_campaign TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS utm_content TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS utm_term TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS referrer TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS landing_page TEXT`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS first_touch_at TIMESTAMPTZ`);
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS attribution_group TEXT`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_transacciones_attribution_group ON transacciones(attribution_group)`);
+    } catch (err) {
+        console.error('Error aplicando migración de atribución de marketing:', err.message);
+    }
+
     // Registro público de influencers/creadores de contenido: solicitud que
     // queda pendiente hasta que el admin les cree manualmente el Bono Especial
     // desde la sección "Influenciadores" del panel.

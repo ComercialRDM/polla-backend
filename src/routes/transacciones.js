@@ -4,6 +4,7 @@ const pool = require('../db');
 const { obtenerPlan, valorACentavos } = require('../config/planes');
 const { generarFirmaIntegridad, WOMPI_PUBLIC_KEY } = require('../services/wompiService');
 const { resolverAtribucion } = require('../services/referidosService');
+const { extraerAtribucion, clasificarCanal } = require('../utils/atribucion');
 const { obtenerIp } = require('../utils/request');
 const { registrarEvento } = require('../services/auditoriaService');
 const { obtenerBancosPSE, crearTransaccionPSE, crearTransaccionBancolombiaTransfer } = require('../services/wompiApiService');
@@ -27,6 +28,20 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 function tokenReferidoValido(ref) {
     return typeof ref === 'string' && UUID_REGEX.test(ref) ? ref : null;
+}
+
+// Combina la atribución UTM (texto libre, sin verificar) con las señales que
+// el backend SÍ verificó (afiliado con firma HMAC válida / token de amigo
+// con formato correcto) para obtener el paquete completo a guardar en la
+// transacción. Centralizado aquí para que las 4 rutas de creación de pago
+// no repitan la misma lógica de clasificación cada una por su lado.
+function construirAtribucionCompleta(body, { influencerId, referidoPorToken }) {
+    const atribucion = extraerAtribucion(body);
+    const grupo = clasificarCanal(atribucion, {
+        esInfluencer: Boolean(influencerId),
+        esAmigo: Boolean(referidoPorToken),
+    });
+    return { ...atribucion, attributionGroup: grupo };
 }
 
 const MIME_TYPES_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
@@ -98,6 +113,7 @@ router.post('/crear-link', async (req, res) => {
     // transacción de DB, porque solo lee/inserta en referido_clics y nunca debe
     // hacer fallar la compra si el token está vencido o es inválido.
     const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+    const atribucionMkt = construirAtribucionCompleta(req.body, { influencerId: atribucion?.influencerId, referidoPorToken });
 
     const client = await pool.connect();
     try {
@@ -154,10 +170,13 @@ router.post('/crear-link', async (req, res) => {
 
         // Insertar transacción PENDIENTE
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
-             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id,
+                                         utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer, landing_page, first_touch_at, attribution_group)
+             VALUES ($1, $2, 'Wompi', $3, $4, $5, 'PENDIENTE', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              RETURNING *`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null,
+                atribucionMkt.utmSource, atribucionMkt.utmMedium, atribucionMkt.utmCampaign, atribucionMkt.utmContent, atribucionMkt.utmTerm,
+                atribucionMkt.referrer, atribucionMkt.landingPage, atribucionMkt.firstTouchAt, atribucionMkt.attributionGroup]
         );
         const transaccion = transaccionRows[0];
 
@@ -232,6 +251,7 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
     }
 
     const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+    const atribucionMkt = construirAtribucionCompleta(req.body, { influencerId: atribucion?.influencerId, referidoPorToken });
 
     const client = await pool.connect();
     try {
@@ -253,10 +273,13 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
 
         // Insertar transacción PENDIENTE con el comprobante adjunto
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token, influencer_id, clic_id)
-             VALUES ($1, $2, $3, $4, $5, $6, 'PENDIENTE', $7, $8, $9, $10, $11)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token, influencer_id, clic_id,
+                                         utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer, landing_page, first_touch_at, attribution_group)
+             VALUES ($1, $2, $3, $4, $5, $6, 'PENDIENTE', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
              RETURNING id`,
-            [usuario.id, partido_id, metodo, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+            [usuario.id, partido_id, metodo, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null,
+                atribucionMkt.utmSource, atribucionMkt.utmMedium, atribucionMkt.utmCampaign, atribucionMkt.utmContent, atribucionMkt.utmTerm,
+                atribucionMkt.referrer, atribucionMkt.landingPage, atribucionMkt.firstTouchAt, atribucionMkt.attributionGroup]
         );
 
         await client.query('COMMIT');
@@ -330,6 +353,7 @@ router.post('/crear-pse', async (req, res) => {
     }
 
     const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+    const atribucionMkt = construirAtribucionCompleta(req.body, { influencerId: atribucion?.influencerId, referidoPorToken });
 
     const client = await pool.connect();
     try {
@@ -345,10 +369,13 @@ router.post('/crear-pse', async (req, res) => {
         await guardarDocumentoSiFalta(client, usuario.id, tipo_documento, documento);
 
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
-             VALUES ($1, $2, 'PSE', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id,
+                                         utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer, landing_page, first_touch_at, attribution_group)
+             VALUES ($1, $2, 'PSE', $3, $4, $5, 'PENDIENTE', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              RETURNING *`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null,
+                atribucionMkt.utmSource, atribucionMkt.utmMedium, atribucionMkt.utmCampaign, atribucionMkt.utmContent, atribucionMkt.utmTerm,
+                atribucionMkt.referrer, atribucionMkt.landingPage, atribucionMkt.firstTouchAt, atribucionMkt.attributionGroup]
         );
         const transaccion = transaccionRows[0];
         const reference = generarReference(transaccion.id);
@@ -407,6 +434,7 @@ router.post('/crear-bancolombia', async (req, res) => {
     }
 
     const atribucion = aff_token ? await resolverAtribucion(aff_token).catch(() => null) : null;
+    const atribucionMkt = construirAtribucionCompleta(req.body, { influencerId: atribucion?.influencerId, referidoPorToken });
 
     const client = await pool.connect();
     try {
@@ -421,10 +449,13 @@ router.post('/crear-bancolombia', async (req, res) => {
         const usuario = await resolverUsuarioComprador(client, { nombre, correo, celular });
 
         const { rows: transaccionRows } = await client.query(
-            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id)
-             VALUES ($1, $2, 'BANCOLOMBIA_TRANSFER', $3, $4, $5, 'PENDIENTE', $6, $7, $8)
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, referido_por_token, influencer_id, clic_id,
+                                         utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer, landing_page, first_touch_at, attribution_group)
+             VALUES ($1, $2, 'BANCOLOMBIA_TRANSFER', $3, $4, $5, 'PENDIENTE', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              RETURNING *`,
-            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null]
+            [usuario.id, partido_id, Number(valor), plan.saldoBono, plan.intentos, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null,
+                atribucionMkt.utmSource, atribucionMkt.utmMedium, atribucionMkt.utmCampaign, atribucionMkt.utmContent, atribucionMkt.utmTerm,
+                atribucionMkt.referrer, atribucionMkt.landingPage, atribucionMkt.firstTouchAt, atribucionMkt.attributionGroup]
         );
         const transaccion = transaccionRows[0];
         const reference = generarReference(transaccion.id);
