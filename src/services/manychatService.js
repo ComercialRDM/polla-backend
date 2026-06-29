@@ -44,29 +44,65 @@ async function manychatRequest(path, body, method = 'POST') {
     return data;
 }
 
+// Nombre del campo de usuario (ver automatización en ManyChat: "Nuevo
+// contacto" -> "Establecer whatsapp_id_sync para {WhatsApp ID}") que guarda
+// una copia del WhatsApp ID de cada contacto, porque findBySystemField busca
+// suscriptores de SMS, no de WhatsApp (limitación documentada de ManyChat:
+// https://community.manychat.com/general-q-a-43/how-to-search-a-user-via-whatsapp-id-9175)
+// y por eso nunca podía recuperar un contacto de WhatsApp ya existente.
+const CAMPO_WHATSAPP_ID_SYNC = 'whatsapp_id_sync';
+
+let fieldIdCache = null;
+
 /**
- * Variantes de la llamada a findBySystemField que se intentan, en orden, para
- * recuperar un suscriptor existente cuando createSubscriber falla con
- * "already exists". El formato "system_field=X&value=Y" devuelve
- * "Only phone or email can be specified" sin importar el valor de X (probado
- * con whatsapp_phone y phone), así que también se intenta el formato con el
- * nombre del campo como parámetro directo (?phone=... / ?whatsapp_phone=...).
- * "wa_id" va primero porque es el nombre de campo real que usa ManyChat
- * internamente (lo confirma el propio mensaje de error de createSubscriber:
- * "This WhatsApp ID already exists: <wa_id>") — las demás variantes son
- * intentos de respaldo que en la práctica no han logrado recuperar el
- * suscriptor (devuelven "Validation error" o data vacía).
+ * Obtiene el field_id numérico de un campo de usuario por su nombre
+ * (findByCustomField lo exige por ID, no por nombre). Se cachea en memoria
+ * porque el ID no cambia mientras no se borre y recree el campo.
+ */
+async function obtenerFieldId(nombreCampo) {
+    if (fieldIdCache?.nombre === nombreCampo) return fieldIdCache.id;
+
+    const respuesta = await manychatRequest('/fb/page/getCustomFields', null, 'GET');
+    const campo = respuesta?.data?.find((f) => f.name === nombreCampo);
+    if (!campo) {
+        console.error(`No se encontró el campo de usuario "${nombreCampo}" en ManyChat (getCustomFields):`, JSON.stringify(respuesta));
+        return null;
+    }
+    fieldIdCache = { nombre: nombreCampo, id: campo.id };
+    return campo.id;
+}
+
+/**
+ * Variantes de búsqueda que se intentan, en orden, para recuperar un
+ * suscriptor existente cuando createSubscriber falla con "already exists".
+ * "custom-field" va primero porque es el único método que en la práctica
+ * encuentra contactos de WhatsApp (ver CAMPO_WHATSAPP_ID_SYNC) — las
+ * variantes de findBySystemField quedan de respaldo, pero están confirmadas
+ * en producción como no funcionales para WhatsApp (esa búsqueda es para
+ * suscriptores de SMS).
  * @param {string} waId celular sin '+' | @param {string} waIdConMas celular con '+'
  */
-function variantesBusquedaSubscriber(waId, waIdConMas) {
-    return [
+async function variantesBusquedaSubscriber(waId, waIdConMas) {
+    const variantes = [];
+
+    const fieldId = await obtenerFieldId(CAMPO_WHATSAPP_ID_SYNC);
+    if (fieldId) {
+        variantes.push({
+            nombre: 'custom-field:whatsapp_id_sync',
+            url: `/fb/subscriber/findByCustomField?field_id=${fieldId}&field_value=${encodeURIComponent(waId)}`,
+        });
+    }
+
+    variantes.push(
         { nombre: 'param-directo:wa_id', url: `/fb/subscriber/findBySystemField?wa_id=${encodeURIComponent(waId)}` },
         { nombre: 'system_field:wa_id', url: `/fb/subscriber/findBySystemField?system_field=wa_id&value=${waId}` },
         { nombre: 'param-directo:whatsapp_phone', url: `/fb/subscriber/findBySystemField?whatsapp_phone=${encodeURIComponent(waIdConMas)}` },
         { nombre: 'param-directo:phone', url: `/fb/subscriber/findBySystemField?phone=${encodeURIComponent(waIdConMas)}` },
         { nombre: 'system_field:whatsapp_phone', url: `/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}` },
         { nombre: 'system_field:phone', url: `/fb/subscriber/findBySystemField?system_field=phone&value=${waId}` },
-    ];
+    );
+
+    return variantes;
 }
 
 /**
@@ -98,14 +134,17 @@ async function obtenerSubscriberId(celular) {
     }
 
     // El suscriptor ya existe en ManyChat: se intenta recuperar su ID probando
-    // varias variantes de la búsqueda, una por una.
+    // varias variantes de la búsqueda, una por una (la de custom-field va
+    // primero y es la que en la práctica funciona para WhatsApp).
     const busquedas = {};
-    for (const { nombre, url } of variantesBusquedaSubscriber(waId, whatsappPhone)) {
+    for (const { nombre, url } of await variantesBusquedaSubscriber(waId, whatsappPhone)) {
         const busqueda = await manychatRequest(url, null, 'GET');
-        console.log(`[ManyChat] findBySystemField (${nombre})`, { celular: waId, url, respuesta: busqueda });
+        console.log(`[ManyChat] busqueda (${nombre})`, { celular: waId, url, respuesta: busqueda });
         busquedas[nombre] = busqueda;
-        if (busqueda?.data?.id) {
-            return { subscriberId: busqueda.data.id, metodo: `findBySystemField:${nombre}`, diagnostico: { crear, busquedas } };
+        // findByCustomField devuelve un array en data; findBySystemField devuelve un objeto con id.
+        const encontrado = Array.isArray(busqueda?.data) ? busqueda.data[0]?.id : busqueda?.data?.id;
+        if (encontrado) {
+            return { subscriberId: encontrado, metodo: nombre, diagnostico: { crear, busquedas } };
         }
     }
 
