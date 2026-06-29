@@ -9,7 +9,7 @@ const PUNTAJES_FASE = {
     octavos: { exacto: 200, tendencia: 100 },
     cuartos: { exacto: 600, tendencia: 300 },
     semifinal: { exacto: 600, tendencia: 300 },
-    final: { exacto: 1000, tendencia: 500 },
+    final: { exacto: 2000, tendencia: 1000 },
 };
 
 function puntajeExacto(fase) {
