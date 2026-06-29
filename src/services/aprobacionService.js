@@ -109,19 +109,24 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
             }
         }
 
-        // Recalcular pozo de premios con la nueva facturación (fuera de la TX: no bloquea si falla)
-        try {
-            await pool.query(`
-                UPDATE pozo_premios SET
-                    total_fact  = total_fact + $1,
-                    primero     = LEAST(2000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.50, 5000000)::bigint,
-                    segundo     = LEAST(1000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.30, 2000000)::bigint,
-                    tercero     = LEAST( 500000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.20, 1000000)::bigint,
-                    actualizado = now()
-                WHERE id = 1
-            `, [transaccion.valor_pagado]);
-        } catch (errPozo) {
-            console.error('Error actualizando pozo_premios:', errPozo.message);
+        // Recalcular pozo de premios con la nueva facturación (fuera de la TX: no bloquea si falla).
+        // Los Bonos Especiales (influencers) y las transacciones de prueba no son
+        // ingresos reales, así que no deben inflar el pozo (igual que ya se excluyen
+        // de las comisiones, ver el if de arriba).
+        if (!transaccion.es_especial && !transaccion.es_test) {
+            try {
+                await pool.query(`
+                    UPDATE pozo_premios SET
+                        total_fact  = total_fact + $1,
+                        primero     = LEAST(2000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.50, 5000000)::bigint,
+                        segundo     = LEAST(1000000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.30, 2000000)::bigint,
+                        tercero     = LEAST( 500000 + GREATEST((total_fact + $1) - 10000000, 0) * 0.10 * 0.20, 1000000)::bigint,
+                        actualizado = now()
+                    WHERE id = 1
+                `, [transaccion.valor_pagado]);
+            } catch (errPozo) {
+                console.error('Error actualizando pozo_premios:', errPozo.message);
+            }
         }
 
         // A partir de aquí la transacción ya quedó APROBADA en la base de datos.
