@@ -188,7 +188,7 @@ async function listarBonosEspeciales() {
 async function enviarInvitacionDifusion(transaccionId) {
     const { rows } = await pool.query(
         `SELECT t.token_acceso, t.saldo_bono, u.nombre, u.celular, u.manychat_subscriber_id,
-                i.codigo_afiliado, i.porcentaje_comision
+                i.codigo_afiliado
          FROM transacciones t
          JOIN usuarios u ON u.id = t.usuario_id
          LEFT JOIN influencers i ON i.usuario_id = u.id
@@ -198,10 +198,13 @@ async function enviarInvitacionDifusion(transaccionId) {
     if (rows.length === 0) {
         throw new Error('Bono Especial no encontrado');
     }
-    const { token_acceso, saldo_bono, nombre, celular, manychat_subscriber_id, codigo_afiliado, porcentaje_comision } = rows[0];
+    const { token_acceso, saldo_bono, nombre, celular, manychat_subscriber_id, codigo_afiliado } = rows[0];
     const linkReferido = `${process.env.FRONTEND_URL}/?ref=${token_acceso}`;
     const linkAfiliado = codigo_afiliado ? `${process.env.FRONTEND_URL}/?aff=${codigo_afiliado}` : null;
 
+    // El porcentaje_comision NUNCA se le muestra al influencer (por correo, SMS
+    // o WhatsApp) — solo se calcula/ve en el panel admin. El link de afiliado sí
+    // se le comparte (para que lo difunda), pero sin revelar la tasa.
     const mensaje = `🇨🇴⚽ ¡Hola ${nombre}! Aquí tienes todo para contarle a tus seguidores cómo participar en la Polla Mundialista de La Retoucherie de Manuela:\n\n`
         + `1️⃣ Entran a ${linkReferido}\n`
         + `2️⃣ Predicen el marcador del próximo partido de Colombia\n`
@@ -211,7 +214,7 @@ async function enviarInvitacionDifusion(transaccionId) {
         + `🎁 Como creador de contenido ya tienes tu Bono Especial de $${saldo_bono.toLocaleString('es-CO')} en arreglos de ropa, ¡totalmente real y listo para usar en tienda!\n\n`
         + `👉 Tu link personal (para que rastreemos a quienes invites): ${linkReferido}`
         + (linkAfiliado
-            ? `\n\n💰 Además, gana ${Number(porcentaje_comision)}% de comisión por cada venta que generes con tu link de afiliado: ${linkAfiliado}`
+            ? `\n\n🔗 También tienes tu link de afiliado para compartir: ${linkAfiliado}`
             : '');
 
     const { subscriberId } = await enviarMensajeManyChat({ celular, mensaje, subscriberId: manychat_subscriber_id });
