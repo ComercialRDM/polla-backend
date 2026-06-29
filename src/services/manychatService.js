@@ -49,10 +49,17 @@ async function manychatRequest(path, body, method = 'POST') {
  * "Only phone or email can be specified" sin importar el valor de X (probado
  * con whatsapp_phone y phone), así que también se intenta el formato con el
  * nombre del campo como parámetro directo (?phone=... / ?whatsapp_phone=...).
+ * "wa_id" va primero porque es el nombre de campo real que usa ManyChat
+ * internamente (lo confirma el propio mensaje de error de createSubscriber:
+ * "This WhatsApp ID already exists: <wa_id>") — las demás variantes son
+ * intentos de respaldo que en la práctica no han logrado recuperar el
+ * suscriptor (devuelven "Validation error" o data vacía).
  * @param {string} waId celular sin '+' | @param {string} waIdConMas celular con '+'
  */
 function variantesBusquedaSubscriber(waId, waIdConMas) {
     return [
+        { nombre: 'param-directo:wa_id', url: `/fb/subscriber/findBySystemField?wa_id=${encodeURIComponent(waId)}` },
+        { nombre: 'system_field:wa_id', url: `/fb/subscriber/findBySystemField?system_field=wa_id&value=${waId}` },
         { nombre: 'param-directo:whatsapp_phone', url: `/fb/subscriber/findBySystemField?whatsapp_phone=${encodeURIComponent(waIdConMas)}` },
         { nombre: 'param-directo:phone', url: `/fb/subscriber/findBySystemField?phone=${encodeURIComponent(waIdConMas)}` },
         { nombre: 'system_field:whatsapp_phone', url: `/fb/subscriber/findBySystemField?system_field=whatsapp_phone&value=${waId}` },
