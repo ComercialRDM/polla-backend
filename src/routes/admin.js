@@ -15,6 +15,7 @@ const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
 const { enviarCorreosResultadoPartido } = require('../services/notificacionesService');
+const { normalizarCelular } = require('../utils/celular');
 
 const router = express.Router();
 
@@ -1096,9 +1097,11 @@ router.post('/test-whatsapp', async (req, res) => {
 
     // Paso 0: si ya tenemos guardado el subscriber_id para este celular (de un envío
     // exitoso previo), se reutiliza directo y no se le pregunta nada a ManyChat.
+    // Se normaliza igual que el resto de la app (sin "+57"/"57") para que
+    // "+573053888885" y "3053888885" encuentren la misma fila guardada.
     const { rows } = await pool.query(
-        `SELECT manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-        [String(celular || '').replace(/[^0-9+]/g, '')]
+        `SELECT manychat_subscriber_id FROM usuarios WHERE regexp_replace(celular, '[^0-9]', '', 'g') = $1`,
+        [normalizarCelular(celular)]
     );
     let subscriberId = rows[0]?.manychat_subscriber_id || null;
     let metodo = subscriberId ? 'usuarios.manychat_subscriber_id' : null;
@@ -1124,10 +1127,10 @@ router.post('/test-whatsapp', async (req, res) => {
     // solo para esta prueba), se crea una cuenta mínima de prueba — si no, cada
     // reintento volvería a chocar con "ya existe" sin poder recordar el ID.
     if (metodo !== 'usuarios.manychat_subscriber_id') {
-        const celularNormalizado = String(celular || '').replace(/[^0-9+]/g, '');
+        const celularNormalizado = normalizarCelular(celular);
         const { rowCount } = await pool.query(
             `UPDATE usuarios SET manychat_subscriber_id = $1
-             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $2 AND manychat_subscriber_id IS NULL`,
+             WHERE regexp_replace(celular, '[^0-9]', '', 'g') = $2 AND manychat_subscriber_id IS NULL`,
             [String(subscriberId), celularNormalizado]
         );
         if (rowCount === 0) {

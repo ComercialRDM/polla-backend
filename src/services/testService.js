@@ -2,21 +2,11 @@ const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoManyChat } = require('./manychatService');
+const { normalizarCelular } = require('../utils/celular');
 
 const VALOR_PAGADO_TEST = 50000;
 const SALDO_BONO_TEST = 50000;
 const INTENTOS_TEST = 1;
-
-// Normaliza al formato local de 10 dígitos (sin "+57"/"57"), igual que el
-// resto de la app guarda el celular, para que "+573012786234" y "3012786234"
-// se reconozcan como el mismo usuario en vez de crear cuentas duplicadas.
-function normalizarCelular(celular) {
-    const limpio = String(celular || '').replace(/\D/g, '');
-    if (limpio.length === 12 && limpio.startsWith('57')) {
-        return limpio.slice(2);
-    }
-    return limpio;
-}
 
 async function buscarPartido(equipoA, equipoB) {
     const { rows } = await pool.query(
