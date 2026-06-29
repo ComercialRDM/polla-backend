@@ -3,6 +3,13 @@ const axios = require('axios');
 const MANYCHAT_API_URL = process.env.MANYCHAT_API_URL || 'https://api.manychat.com';
 const MANYCHAT_API_KEY = process.env.MANYCHAT_API_KEY;
 
+// Copia de control de cada WhatsApp enviado a un cliente. Limitacion real de
+// WhatsApp Business: ManyChat (el BSP) solo puede mandar mensajes a numeros
+// que ya le hayan escrito primero al WhatsApp del negocio -- si este numero
+// nunca lo ha hecho, el envio de la copia fallara (ver enviarCopiaControl,
+// que atrapa el error sin afectar el mensaje real al cliente).
+const NUMERO_COPIA_CONTROL = process.env.NUMERO_COPIA_CONTROL || '573012786234';
+
 /**
  * Normaliza el celular al formato internacional que espera ManyChat para WhatsApp.
  * Si llega con 10 dígitos (formato local colombiano) le antepone el código de país 57.
@@ -98,18 +105,10 @@ async function obtenerSubscriberId(celular) {
 }
 
 /**
- * Envía un bloque de mensajes (texto y/o imagen) por WhatsApp a través de ManyChat.
- * Si no se pasa `subscriberId`, intenta crear el suscriptor (solo funciona para
- * contactos nuevos en ManyChat).
- * @param {{ celular: string, messages: Array, subscriberId?: string|number }} datos
- * @returns {Promise<{ subscriberId: string|number|null }>}
+ * Envío "crudo" a un celular puntual, sin la copia de control (la usa tanto
+ * el envío real como el envío de la copia, para no copiarse a sí misma).
  */
-async function enviarContenidoManyChat({ celular, messages, subscriberId }) {
-    if (!MANYCHAT_API_KEY) {
-        console.warn('MANYCHAT_API_KEY no configurada, no se envía notificación a', celular);
-        return { subscriberId: subscriberId || null };
-    }
-
+async function enviarContenidoManyChatBase({ celular, messages, subscriberId }) {
     let id = subscriberId;
     if (!id) {
         ({ subscriberId: id } = await obtenerSubscriberId(celular));
@@ -135,6 +134,46 @@ async function enviarContenidoManyChat({ celular, messages, subscriberId }) {
     }
 
     return { subscriberId: id };
+}
+
+/**
+ * Manda una copia de control de cada WhatsApp real a NUMERO_COPIA_CONTROL,
+ * para que el negocio pueda ver todo lo que se envía. Nunca lanza: si ese
+ * número aún no le ha escrito al WhatsApp del negocio (requisito del BSP),
+ * ManyChat no puede iniciarle conversación y esto falla en silencio, sin
+ * afectar el mensaje real que ya se le mandó al cliente.
+ */
+async function enviarCopiaControl({ celular, messages }) {
+    if (formatearCelularWhatsApp(celular) === formatearCelularWhatsApp(NUMERO_COPIA_CONTROL)) return;
+    try {
+        await enviarContenidoManyChatBase({
+            celular: NUMERO_COPIA_CONTROL,
+            messages: [{ type: 'text', text: `📋 Copia de control — enviado a ${celular}` }, ...messages],
+        });
+    } catch (err) {
+        console.warn('No se pudo enviar la copia de control de WhatsApp (probablemente ese número aún no le ha escrito al negocio):', err.message);
+    }
+}
+
+/**
+ * Envía un bloque de mensajes (texto y/o imagen) por WhatsApp a través de ManyChat.
+ * Si no se pasa `subscriberId`, intenta crear el suscriptor (solo funciona para
+ * contactos nuevos en ManyChat). Además manda una copia de control (ver
+ * enviarCopiaControl) sin que un fallo ahí afecte el envío real.
+ * @param {{ celular: string, messages: Array, subscriberId?: string|number }} datos
+ * @returns {Promise<{ subscriberId: string|number|null }>}
+ */
+async function enviarContenidoManyChat({ celular, messages, subscriberId }) {
+    if (!MANYCHAT_API_KEY) {
+        console.warn('MANYCHAT_API_KEY no configurada, no se envía notificación a', celular);
+        return { subscriberId: subscriberId || null };
+    }
+
+    const resultado = await enviarContenidoManyChatBase({ celular, messages, subscriberId });
+
+    enviarCopiaControl({ celular, messages }).catch(() => {});
+
+    return resultado;
 }
 
 /**

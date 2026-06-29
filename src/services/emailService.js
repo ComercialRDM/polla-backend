@@ -1,5 +1,11 @@
 const nodemailer = require('nodemailer');
 
+// Copia de control: el negocio quiere ver cada correo que sale a un cliente.
+// Deliberadamente NO se aplica a los de recuperacion de contraseña (llevan un
+// codigo/clave sensible) ni a los que ya van dirigidos al propio correo admin
+// (notificacion de voto, backup) -- ahi copiarse a si mismo no aporta nada.
+const BCC_COMERCIAL = process.env.BCC_COMERCIAL || 'comercial@retoucherie.com.co';
+
 function crearTransporter() {
     return nodemailer.createTransport({
         host: process.env.SMTP_HOST,
@@ -48,6 +54,7 @@ async function enviarCorreoBono({ destinatario, nombre, saldoBono, intentos, tok
     await transporter.sendMail({
         from: process.env.MAIL_FROM,
         to: destinatario,
+        bcc: BCC_COMERCIAL,
         subject: esTest
             ? '🧪 [PRUEBA] Tu Bono Digital y acceso a la Polla Mundialista'
             : esEspecial
@@ -113,6 +120,7 @@ async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoV
     await transporter.sendMail({
         from: process.env.MAIL_FROM,
         to: destinatario,
+        bcc: BCC_COMERCIAL,
         subject: `¡${equipoLocal} vs ${equipoVisitante}! Compra tu bono y participa 🇨🇴`,
         html,
     });
@@ -164,6 +172,7 @@ async function enviarCorreoResultadoPartido({
     await transporter.sendMail({
         from: process.env.MAIL_FROM,
         to: destinatario,
+        bcc: BCC_COMERCIAL,
         subject: `${equipoLocal} ${golesLocal}-${golesVisitante} ${equipoVisitante} — así te fue en la Polla`,
         html,
     });
@@ -256,6 +265,7 @@ async function enviarCorreoBonoColWinner({ destinatario, nombre, partido, monto 
     await transporter.sendMail({
         from: process.env.MAIL_FROM,
         to: destinatario,
+        bcc: BCC_COMERCIAL,
         subject: '🇨🇴 ¡Ganaste el Bono Colombia! — La Retoucherie',
         html,
     });
