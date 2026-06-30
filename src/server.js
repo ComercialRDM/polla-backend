@@ -19,6 +19,7 @@ const partidosRouter  = require('./routes/partidos');
 const passkeysRouter  = require('./routes/passkeys');
 const influencersRouter = require('./routes/influencers');
 const referidosRouter = require('./routes/referidos');
+const gruposRouter = require('./routes/grupos');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 const { iniciarSincronizacionMundial } = require('./services/sincronizacionMundialService');
@@ -79,6 +80,7 @@ app.use('/api/partidos', pollaLimiter, partidosRouter);
 app.use('/api/passkey', authLimiter, passkeysRouter);
 app.use('/api/influencers', influencersLimiter, influencersRouter);
 app.use('/api/referidos', clicLimiter, referidosRouter);
+app.use('/api/grupo', pollaLimiter, gruposRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
