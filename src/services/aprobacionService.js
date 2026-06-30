@@ -3,6 +3,7 @@ const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoPorPlantilla } = require('./manychatService');
 const { registrarEvento } = require('./auditoriaService');
+const { registrarBonoEnSheets, registrarInfluencerEnSheets } = require('./sheetsService');
 
 /**
  * Aprueba una transacción de forma idempotente: solo actualiza si está PENDIENTE.
@@ -78,13 +79,19 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         // UNIQUE(transaccion_id) en `comisiones` (ON CONFLICT DO NOTHING).
         // Se calcula fuera de la transacción de aprobación a propósito: un
         // problema aquí no debe revertir una venta que el cliente ya pagó.
+        let _influencer = null; // se usa abajo para Sheets
+
         if (transaccion.influencer_id && !transaccion.es_especial && !transaccion.es_test) {
             try {
                 const { rows: infRows } = await pool.query(
-                    'SELECT porcentaje_comision FROM influencers WHERE id = $1 AND activo = TRUE',
+                    `SELECT i.porcentaje_comision, i.codigo_afiliado, u.nombre
+                     FROM influencers i
+                     JOIN usuarios u ON u.id = i.usuario_id
+                     WHERE i.id = $1 AND i.activo = TRUE`,
                     [transaccion.influencer_id]
                 );
                 if (infRows.length > 0) {
+                    _influencer = infRows[0];
                     const porcentaje = Number(infRows[0].porcentaje_comision);
                     const montoComision = Math.round(transaccion.valor_pagado * (porcentaje / 100));
 
@@ -126,6 +133,17 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
                 `, [transaccion.valor_pagado]);
             } catch (errPozo) {
                 console.error('Error actualizando pozo_premios:', errPozo.message);
+            }
+        }
+
+        // Registrar en Google Sheets (auditoría en vivo). Fire-and-forget: un
+        // error aquí nunca revierte la aprobación ni bloquea al comprador.
+        if (!transaccion.es_especial && !transaccion.es_test) {
+            registrarBonoEnSheets({ transaccion, usuario, influencerNombre: _influencer?.nombre || '' })
+                .catch(() => {});
+            if (_influencer) {
+                registrarInfluencerEnSheets({ transaccion, usuario, influencer: _influencer })
+                    .catch(() => {});
             }
         }
 
