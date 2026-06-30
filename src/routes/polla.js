@@ -1040,8 +1040,7 @@ router.get('/resultados-finales', async (req, res) => {
     }
 });
 
-// POST /api/polla/foto-perfil — sube o actualiza la foto de un creador de contenido.
-// Solo funciona para cuentas es_especial (influencers).
+// POST /api/polla/foto-perfil — sube o actualiza la foto de perfil de cualquier usuario.
 router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
     const { token_acceso } = req.body;
     if (!token_acceso || !req.file) {
@@ -1059,7 +1058,7 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
              WHERE id = (
                  SELECT u.id FROM transacciones t
                  JOIN usuarios u ON u.id = t.usuario_id
-                 WHERE t.token_acceso = $3 AND t.estado_pago = 'APROBADO' AND t.es_especial = TRUE
+                 WHERE t.token_acceso = $3 AND t.estado_pago = 'APROBADO'
                  LIMIT 1
              )
              RETURNING id`,
@@ -1067,7 +1066,7 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
         );
 
         if (rows.length === 0) {
-            return res.status(403).json({ success: false, error: 'Token no válido o cuenta no es de creador de contenido' });
+            return res.status(403).json({ success: false, error: 'Token no válido o bono no encontrado' });
         }
 
         return res.json({ success: true });
