@@ -72,8 +72,13 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.json({ status: 'ok', db: 'ok', timestamp: new Date().toISOString() });
+    } catch (err) {
+        res.status(503).json({ status: 'error', db: 'unreachable', timestamp: new Date().toISOString() });
+    }
 });
 
 app.use('/api/transacciones', transaccionesLimiter, transaccionesRouter);
