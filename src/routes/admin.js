@@ -1680,4 +1680,153 @@ router.post('/test-alerta', adminAuth, async (req, res) => {
     }
 });
 
+// GET /api/admin/demograficos — desglose de género y rango de edad de compradores reales
+router.get('/demograficos', async (req, res) => {
+    try {
+        const { rows: generoRows } = await pool.query(
+            `SELECT COALESCE(u.sexo, 'sin_dato') AS sexo, COUNT(DISTINCT u.id)::int AS total
+             FROM usuarios u
+             INNER JOIN transacciones t ON t.usuario_id = u.id
+               AND t.estado_pago = 'APROBADO' AND t.es_test = FALSE AND t.es_especial = FALSE
+             GROUP BY u.sexo
+             ORDER BY total DESC`
+        );
+
+        const { rows: edadRows } = await pool.query(
+            `SELECT rango, total FROM (
+               SELECT
+                 CASE
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) BETWEEN 18 AND 24 THEN '18-24'
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) BETWEEN 25 AND 34 THEN '25-34'
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) BETWEEN 35 AND 44 THEN '35-44'
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) BETWEEN 45 AND 54 THEN '45-54'
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) BETWEEN 55 AND 64 THEN '55-64'
+                   WHEN EXTRACT(YEAR FROM AGE(u.fecha_nacimiento)) >= 65             THEN '65+'
+                   ELSE 'sin_dato'
+                 END AS rango,
+                 COUNT(DISTINCT u.id)::int AS total
+               FROM usuarios u
+               INNER JOIN transacciones t ON t.usuario_id = u.id
+                 AND t.estado_pago = 'APROBADO' AND t.es_test = FALSE AND t.es_especial = FALSE
+               WHERE u.fecha_nacimiento IS NOT NULL
+               GROUP BY rango
+             ) sub
+             ORDER BY CASE rango
+               WHEN '18-24' THEN 1 WHEN '25-34' THEN 2 WHEN '35-44' THEN 3
+               WHEN '45-54' THEN 4 WHEN '55-64' THEN 5 WHEN '65+' THEN 6 ELSE 7 END`
+        );
+
+        const { rows: totalRows } = await pool.query(
+            `SELECT COUNT(DISTINCT u.id)::int AS total_compradores,
+                    COUNT(DISTINCT CASE WHEN u.fecha_nacimiento IS NOT NULL THEN u.id END)::int AS con_edad,
+                    COUNT(DISTINCT CASE WHEN u.sexo IS NOT NULL THEN u.id END)::int AS con_sexo
+             FROM usuarios u
+             INNER JOIN transacciones t ON t.usuario_id = u.id
+               AND t.estado_pago = 'APROBADO' AND t.es_test = FALSE AND t.es_especial = FALSE`
+        );
+
+        return res.json({
+            success: true,
+            genero: generoRows,
+            edades: edadRows,
+            totales: totalRows[0],
+        });
+    } catch (err) {
+        console.error('Error en /admin/demograficos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/marketing/resumen — bolsa del 5%, bonos influencers (auto) y gastos manuales
+router.get('/marketing/resumen', async (req, res) => {
+    try {
+        const { rows: ingRows } = await pool.query(
+            `SELECT COALESCE(SUM(valor_pagado), 0)::bigint AS ingresos_totales
+             FROM transacciones
+             WHERE estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE`
+        );
+
+        const { rows: bonInflRows } = await pool.query(
+            `SELECT COALESCE(SUM(valor_pagado), 0)::bigint AS total
+             FROM transacciones
+             WHERE es_especial = TRUE AND es_test = FALSE`
+        );
+
+        const { rows: gastosRows } = await pool.query(
+            `SELECT id, tipo, descripcion, monto::bigint AS monto, fecha, creado_en
+             FROM marketing_gastos
+             ORDER BY fecha DESC, creado_en DESC`
+        );
+
+        const ingresosTotales  = Number(ingRows[0].ingresos_totales);
+        const bolsa            = Math.round(ingresosTotales * 0.05);
+        const bonosInfluencers = Number(bonInflRows[0].total);
+        const bonoManual       = gastosRows.filter(g => g.tipo === 'bono_manual').reduce((s, g) => s + Number(g.monto), 0);
+        const pautaAds         = gastosRows.filter(g => g.tipo === 'pauta_ads').reduce((s, g) => s + Number(g.monto), 0);
+        const disponible       = bolsa - bonosInfluencers - bonoManual - pautaAds;
+
+        return res.json({
+            success: true,
+            ingresosTotales,
+            bolsa,
+            bonosInfluencers,
+            bonoManual,
+            pautaAds,
+            disponible,
+            gastos: gastosRows.map(g => ({
+                id: g.id,
+                tipo: g.tipo,
+                descripcion: g.descripcion,
+                monto: Number(g.monto),
+                fecha: g.fecha,
+            })),
+        });
+    } catch (err) {
+        console.error('Error en /admin/marketing/resumen:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/marketing/gastos — registrar gasto manual de marketing
+router.post('/marketing/gastos', async (req, res) => {
+    const { tipo, descripcion, monto, fecha } = req.body;
+    const TIPOS_VALIDOS = ['bono_manual', 'pauta_ads'];
+
+    if (!tipo || !TIPOS_VALIDOS.includes(tipo)) {
+        return res.status(400).json({ success: false, error: `tipo debe ser: ${TIPOS_VALIDOS.join(' o ')}` });
+    }
+    if (!monto || Number(monto) <= 0) {
+        return res.status(400).json({ success: false, error: 'monto debe ser mayor a 0' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `INSERT INTO marketing_gastos (tipo, descripcion, monto, fecha)
+             VALUES ($1, $2, $3, $4)
+             RETURNING id, tipo, descripcion, monto::bigint AS monto, fecha`,
+            [tipo, descripcion || null, Math.round(Number(monto)), fecha || null]
+        );
+        return res.json({ success: true, gasto: { ...rows[0], monto: Number(rows[0].monto) } });
+    } catch (err) {
+        console.error('Error en POST /admin/marketing/gastos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// DELETE /api/admin/marketing/gastos/:id — eliminar gasto manual
+router.delete('/marketing/gastos/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: 'ID inválido' });
+    }
+    try {
+        const { rowCount } = await pool.query('DELETE FROM marketing_gastos WHERE id = $1', [id]);
+        if (rowCount === 0) return res.status(404).json({ success: false, error: 'Gasto no encontrado' });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en DELETE /admin/marketing/gastos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

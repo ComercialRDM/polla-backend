@@ -136,7 +136,8 @@ router.get('/info', async (req, res) => {
         const { rows } = await pool.query(
             `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token,
                     t.valor_pagado, t.saldo_bono, t.attribution_group,
-                    (u.foto_imagen IS NOT NULL) AS tiene_foto
+                    (u.foto_imagen IS NOT NULL) AS tiene_foto,
+                    u.fecha_nacimiento, u.sexo
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -148,7 +149,7 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group, tiene_foto } = rows[0];
+        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group, tiene_foto, fecha_nacimiento, sexo } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -195,6 +196,8 @@ router.get('/info', async (req, res) => {
             dinero_disponible: saldo.dineroDisponible,
             cupo_valor: CUPO_VALOR,
             partidos,
+            fecha_nacimiento: fecha_nacimiento ? fecha_nacimiento.toISOString().split('T')[0] : null,
+            sexo: sexo || null,
         });
     } catch (err) {
         console.error('Error en /polla/info:', err);
@@ -1072,6 +1075,63 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('Error en /polla/foto-perfil:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// PATCH /api/polla/perfil-demografico
+// Guarda fecha de nacimiento y sexo del usuario (campos opcionales para premios flash).
+router.patch('/perfil-demografico', async (req, res) => {
+    const { token_acceso, fecha_nacimiento, sexo } = req.body;
+
+    if (!token_acceso) {
+        return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+    }
+
+    const SEXOS_VALIDOS = ['masculino', 'femenino', 'prefiero_no_decirlo'];
+    if (sexo && !SEXOS_VALIDOS.includes(sexo)) {
+        return res.status(400).json({ success: false, error: 'Valor de sexo no válido' });
+    }
+
+    if (fecha_nacimiento) {
+        const fn = new Date(fecha_nacimiento);
+        if (isNaN(fn.getTime())) {
+            return res.status(400).json({ success: false, error: 'Fecha de nacimiento inválida' });
+        }
+        const edad = Math.floor((Date.now() - fn.getTime()) / (365.25 * 24 * 3600 * 1000));
+        if (edad < 18) {
+            return res.status(400).json({ success: false, error: 'Debes ser mayor de 18 años' });
+        }
+    }
+
+    try {
+        const { rows: txRows } = await pool.query(
+            `SELECT u.id FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
+             LIMIT 1`,
+            [token_acceso]
+        );
+        if (txRows.length === 0) {
+            return res.status(403).json({ success: false, error: 'Token inválido' });
+        }
+        const usuarioId = txRows[0].id;
+
+        const campos = [];
+        const valores = [];
+        if (fecha_nacimiento !== undefined) { campos.push(`fecha_nacimiento = $${campos.length + 1}`); valores.push(fecha_nacimiento || null); }
+        if (sexo !== undefined)             { campos.push(`sexo = $${campos.length + 1}`);             valores.push(sexo || null); }
+
+        if (campos.length === 0) {
+            return res.status(400).json({ success: false, error: 'Sin campos para actualizar' });
+        }
+
+        valores.push(usuarioId);
+        await pool.query(`UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length}`, valores);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en PATCH /polla/perfil-demografico:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
