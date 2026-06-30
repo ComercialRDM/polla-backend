@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
@@ -8,6 +9,8 @@ const { puntajeExacto, puntajeTendencia } = require('../config/puntajesFase');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
+
+const uploadFoto = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 const { votarLimiter } = require('../middleware/rateLimiters');
 const usuarioAuth = require('../middleware/usuarioAuth');
 const { obtenerRankingEspeciales } = require('../services/especialesService');
@@ -132,7 +135,8 @@ router.get('/info', async (req, res) => {
     try {
         const { rows } = await pool.query(
             `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token,
-                    t.valor_pagado, t.saldo_bono, t.attribution_group
+                    t.valor_pagado, t.saldo_bono, t.attribution_group,
+                    (u.foto_imagen IS NOT NULL) AS tiene_foto
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
@@ -144,7 +148,7 @@ router.get('/info', async (req, res) => {
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group } = rows[0];
+        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group, tiene_foto } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -177,6 +181,8 @@ router.get('/info', async (req, res) => {
             acceso: true,
             nombre,
             es_especial,
+            tiene_foto,
+            usuario_id,
             equipos_favoritos: equipos_favoritos || [],
             calendario_token,
             valor_pagado,
@@ -1030,6 +1036,43 @@ router.get('/resultados-finales', async (req, res) => {
         });
     } catch (err) {
         console.error('Error en /polla/resultados-finales:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/polla/foto-perfil — sube o actualiza la foto de un creador de contenido.
+// Solo funciona para cuentas es_especial (influencers).
+router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
+    const { token_acceso } = req.body;
+    if (!token_acceso || !req.file) {
+        return res.status(400).json({ success: false, error: 'Faltan datos (token o foto)' });
+    }
+
+    const mime = req.file.mimetype;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+        return res.status(400).json({ success: false, error: 'Formato de imagen no válido (usa JPG, PNG o WEBP)' });
+    }
+
+    try {
+        const { rows } = await pool.query(
+            `UPDATE usuarios SET foto_imagen = $1, foto_mime = $2
+             WHERE id = (
+                 SELECT u.id FROM transacciones t
+                 JOIN usuarios u ON u.id = t.usuario_id
+                 WHERE t.token_acceso = $3 AND t.estado_pago = 'APROBADO' AND t.es_especial = TRUE
+                 LIMIT 1
+             )
+             RETURNING id`,
+            [req.file.buffer, mime, token_acceso]
+        );
+
+        if (rows.length === 0) {
+            return res.status(403).json({ success: false, error: 'Token no válido o cuenta no es de creador de contenido' });
+        }
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /polla/foto-perfil:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
