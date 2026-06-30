@@ -5,6 +5,7 @@ const { validarFirmaWebhook } = require('../services/wompiService');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { calcularRanking } = require('../services/rankingService');
 const { registrarEvento } = require('../services/auditoriaService');
+const { registrarEvento: registrarAlerta, alertaInmediata } = require('../services/alertaService');
 const { obtenerIp } = require('../utils/request');
 
 const router = express.Router();
@@ -38,6 +39,7 @@ router.post('/wompi', async (req, res) => {
 
         // 1. Validar firma del evento
         if (!validarFirmaWebhook(evento)) {
+            registrarAlerta('WEBHOOK_FIRMA_INVALIDA', { ip: req.ip, descripcion: `Firma inválida en webhook Wompi desde ${req.ip}` });
             return res.status(401).json({ success: false, error: 'Firma inválida' });
         }
 
@@ -88,6 +90,7 @@ router.post('/wompi', async (req, res) => {
             await aprobarTransaccion({ transaccionId: transaccion.id, pasarelaTransaccionId });
         } else if (['DECLINED', 'VOIDED', 'ERROR'].includes(status)) {
             await rechazarTransaccion({ transaccionId: transaccion.id });
+            registrarAlerta('PAGO_FALLIDO', { descripcion: `Pago ${status} — referencia: ${reference || 'N/A'}` });
         }
 
         return res.status(200).send('ok');

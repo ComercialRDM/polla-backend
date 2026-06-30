@@ -20,6 +20,7 @@ const passkeysRouter  = require('./routes/passkeys');
 const influencersRouter = require('./routes/influencers');
 const referidosRouter = require('./routes/referidos');
 const gruposRouter = require('./routes/grupos');
+const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
 const { iniciarSincronizacionMundial } = require('./services/sincronizacionMundialService');
@@ -91,7 +92,14 @@ if (process.env.SENTRY_DSN) {
 app.use((err, req, res, next) => {
     if (err) {
         console.error('Error no controlado:', err.message);
-        return res.status(400).json({ success: false, error: err.message || 'Error procesando la solicitud' });
+        // Alertar en errores de servidor reales (no errores de validación del cliente)
+        const esError500 = !err.status || err.status >= 500;
+        if (esError500) {
+            registrarAlerta('ERROR_SERVIDOR', { descripcion: err.message?.substring(0, 60) || 'Error 500 sin mensaje', ip: req.ip });
+            registrarAlerta('ERROR_SERVIDOR_ALTO', { descripcion: err.message?.substring(0, 60) || 'Error 500 sin mensaje' });
+        }
+        const status = err.status || (err.type === 'entity.too.large' ? 413 : 400);
+        return res.status(status).json({ success: false, error: err.message || 'Error procesando la solicitud' });
     }
     next();
 });

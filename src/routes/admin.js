@@ -11,6 +11,7 @@ const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
 const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, reenviarBonoWhatsApp, obtenerRankingEspeciales } = require('../services/especialesService');
 const { registrarEvento } = require('../services/auditoriaService');
+const { alertaInmediata, ALERTAS } = require('../services/alertaService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
@@ -1662,6 +1663,20 @@ router.patch('/usuarios/:id/es-test', async (req, res) => {
     } catch (err) {
         console.error('Error en PATCH /admin/usuarios/:id/es-test:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/test-alerta — envía una alerta de prueba al celular configurado
+router.post('/test-alerta', adminAuth, async (req, res) => {
+    const { tipo = 'ERROR_SERVIDOR' } = req.body;
+    if (!ALERTAS[tipo]) {
+        return res.status(400).json({ success: false, error: `Tipo desconocido. Válidos: ${Object.keys(ALERTAS).join(', ')}` });
+    }
+    try {
+        await alertaInmediata(tipo, { descripcion: 'Prueba manual desde panel de admin' });
+        return res.json({ success: true, mensaje: `Alerta "${tipo}" enviada` });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
     }
 });
 

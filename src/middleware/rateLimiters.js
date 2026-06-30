@@ -1,4 +1,6 @@
 const rateLimit = require('express-rate-limit');
+const { registrarEvento } = require('../services/alertaService');
+const { obtenerIp } = require('../utils/request');
 
 // Limita login, registro y recuperación de contraseña para frenar fuerza bruta
 // y abuso del envío de OTP por WhatsApp (ManyChat)
@@ -8,6 +10,10 @@ const authLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' },
+    handler: (req, res, next, options) => {
+        registrarEvento('AUTH_FUERZA_BRUTA', { ip: obtenerIp(req) });
+        res.status(options.statusCode).json(options.message);
+    },
 });
 
 // Limita el panel de administración (clave fija) para frenar fuerza bruta
@@ -30,6 +36,10 @@ const transaccionesLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
+    handler: (req, res, next, options) => {
+        registrarEvento('RATE_LIMIT_TRANSACCIONES', { ip: obtenerIp(req) });
+        res.status(options.statusCode).json(options.message);
+    },
 });
 
 // Limita el tráfico general de /api/polla y /api/partidos (ranking en vivo,
@@ -53,6 +63,10 @@ const votarLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiados intentos de votación. Espera unos minutos e inténtalo de nuevo.' },
+    handler: (req, res, next, options) => {
+        registrarEvento('RATE_LIMIT_VOTAR', { ip: obtenerIp(req) });
+        res.status(options.statusCode).json(options.message);
+    },
 });
 
 // Límite estricto y por número de destino para el envío de OTP por SMS (Twilio,
