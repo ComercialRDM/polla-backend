@@ -1829,4 +1829,192 @@ router.delete('/marketing/gastos/:id', async (req, res) => {
     }
 });
 
+// ── Regalos de Bono ───────────────────────────────────────────────────────────
+const { generarImagenBono: _generarBono } = require('../services/bonoService');
+const { enviarCorreoBono: _enviarBono } = require('../services/emailService');
+const { registrarBonoEnSheets: _sheetsClientes } = require('../services/sheetsService');
+
+router.get('/regalos', async (req, res) => {
+    const estado = req.query.estado || 'PENDIENTE';
+    try {
+        const { rows } = await pool.query(
+            `SELECT sr.id, sr.estado, sr.creado_en, sr.aprobado_en, sr.motivo_rechazo,
+                    sr.receptor_nombre, sr.receptor_cedula, sr.receptor_celular, sr.receptor_correo,
+                    u.nombre AS donante_nombre, u.celular AS donante_celular, u.correo AS donante_correo,
+                    t.saldo_bono, t.intentos_totales, t.token_acceso AS token_donante,
+                    t2.token_acceso AS token_receptor
+             FROM solicitudes_regalo sr
+             JOIN usuarios u  ON u.id  = sr.usuario_id
+             JOIN transacciones t  ON t.id  = sr.transaccion_id
+             LEFT JOIN transacciones t2 ON t2.id = sr.nueva_transaccion_id
+             WHERE sr.estado = $1
+             ORDER BY sr.creado_en DESC`,
+            [estado]
+        );
+        res.json({ success: true, regalos: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+router.post('/regalos/:id/aprobar', async (req, res) => {
+    const solicitudId = Number(req.params.id);
+    try {
+        const { rows: solRows } = await pool.query(
+            `SELECT sr.*, t.saldo_bono, t.intentos_totales, t.partido_id, u.nombre AS donante_nombre
+             FROM solicitudes_regalo sr
+             JOIN transacciones t ON t.id = sr.transaccion_id
+             JOIN usuarios u ON u.id = sr.usuario_id
+             WHERE sr.id = $1 AND sr.estado = 'PENDIENTE'`,
+            [solicitudId]
+        );
+        if (solRows.length === 0) return res.status(404).json({ success: false, error: 'Solicitud no encontrada o ya procesada' });
+        const sol = solRows[0];
+
+        // Crear o reusar cuenta del receptor
+        const celNorm = String(sol.receptor_celular).replace(/[^0-9+]/g, '');
+        let receptor;
+        const { rows: exist } = await pool.query('SELECT * FROM usuarios WHERE celular = $1', [celNorm]);
+        if (exist.length > 0) {
+            receptor = exist[0];
+        } else {
+            const { rows: nuevo } = await pool.query(
+                'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
+                [sol.receptor_nombre, sol.receptor_correo || null, celNorm]
+            );
+            receptor = nuevo[0];
+        }
+
+        // Crear transacción de regalo para el receptor
+        const { rows: newTx } = await pool.query(
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, es_regalo)
+             VALUES ($1, $2, 'Regalo', $3, $3, $4, 'APROBADO', TRUE) RETURNING *`,
+            [receptor.id, sol.partido_id, sol.saldo_bono, sol.intentos_totales]
+        );
+        const nuevaTx = newTx[0];
+
+        // Anular saldo del bono original
+        await pool.query(`UPDATE transacciones SET saldo_bono = 0 WHERE id = $1`, [sol.transaccion_id]);
+
+        // Marcar solicitud como aprobada
+        await pool.query(
+            `UPDATE solicitudes_regalo
+             SET estado = 'APROBADO', nueva_transaccion_id = $1, admin_usuario_id = $2, aprobado_en = now()
+             WHERE id = $3`,
+            [nuevaTx.id, req.admin.id, solicitudId]
+        );
+
+        // Generar bono y notificar (fire-and-forget: no revierte la aprobación)
+        try {
+            const bonoBuffer = await _generarBono({
+                nombre: sol.receptor_nombre,
+                saldoBono: sol.saldo_bono,
+                valorPagado: null,
+                tokenAcceso: nuevaTx.token_acceso,
+                esRegalo: true,
+                nombreDonante: sol.donante_nombre,
+            });
+            if (sol.receptor_correo) {
+                await _enviarBono({
+                    destinatario: sol.receptor_correo,
+                    nombre: sol.receptor_nombre,
+                    saldoBono: sol.saldo_bono,
+                    intentos: sol.intentos_totales,
+                    tokenAcceso: nuevaTx.token_acceso,
+                    bonoBuffer,
+                });
+            }
+            _sheetsClientes({
+                transaccion: nuevaTx,
+                usuario: receptor,
+                influencerNombre: `Regalo de ${sol.donante_nombre}`,
+            }).catch(() => {});
+        } catch (errEnvio) {
+            console.error('[regalo aprobar] error enviando bono:', errEnvio.message);
+        }
+
+        res.json({ success: true, nueva_transaccion_id: nuevaTx.id });
+    } catch (err) {
+        console.error('POST /regalos/:id/aprobar:', err.message);
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+router.post('/regalos/:id/rechazar', async (req, res) => {
+    const { motivo } = req.body;
+    try {
+        const { rowCount } = await pool.query(
+            `UPDATE solicitudes_regalo
+             SET estado = 'RECHAZADO', motivo_rechazo = $1, admin_usuario_id = $2, aprobado_en = now()
+             WHERE id = $3 AND estado = 'PENDIENTE'`,
+            [motivo || null, req.admin.id, Number(req.params.id)]
+        );
+        if (rowCount === 0) return res.status(404).json({ success: false, error: 'Solicitud no encontrada o ya procesada' });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+router.get('/regalos/reporte', async (req, res) => {
+    const { desde, hasta, formato = 'csv' } = req.query;
+    try {
+        let query = `
+            SELECT sr.creado_en AT TIME ZONE 'America/Bogota' AS fecha_solicitud,
+                   sr.aprobado_en AT TIME ZONE 'America/Bogota' AS fecha_aprobacion,
+                   sr.estado,
+                   u.nombre AS donante_nombre, u.celular AS donante_celular, u.correo AS donante_correo,
+                   sr.receptor_nombre, sr.receptor_cedula, sr.receptor_celular, sr.receptor_correo,
+                   t.saldo_bono, t.token_acceso AS token_donante,
+                   t2.token_acceso AS token_receptor, sr.motivo_rechazo
+            FROM solicitudes_regalo sr
+            JOIN usuarios u ON u.id = sr.usuario_id
+            JOIN transacciones t ON t.id = sr.transaccion_id
+            LEFT JOIN transacciones t2 ON t2.id = sr.nueva_transaccion_id
+            WHERE 1=1`;
+        const params = [];
+        if (desde) { params.push(desde); query += ` AND sr.creado_en >= $${params.length}::date`; }
+        if (hasta) { params.push(hasta); query += ` AND sr.creado_en < $${params.length}::date + INTERVAL '1 day'`; }
+        query += ' ORDER BY sr.creado_en DESC';
+
+        const { rows } = await pool.query(query, params);
+        const cols = ['Fecha Solicitud','Fecha Aprobación','Estado',
+            'Donante Nombre','Donante Celular','Donante Correo',
+            'Receptor Nombre','Receptor Cédula','Receptor Celular','Receptor Correo',
+            'Saldo Bono ($)','Token Donante','Token Receptor','Motivo Rechazo'];
+        const datos = rows.map(r => [
+            r.fecha_solicitud ? new Date(r.fecha_solicitud).toLocaleString('es-CO') : '',
+            r.fecha_aprobacion ? new Date(r.fecha_aprobacion).toLocaleString('es-CO') : '',
+            r.estado || '',
+            r.donante_nombre||'', r.donante_celular||'', r.donante_correo||'',
+            r.receptor_nombre||'', r.receptor_cedula||'', r.receptor_celular||'', r.receptor_correo||'',
+            r.saldo_bono||0, r.token_donante||'', r.token_receptor||'', r.motivo_rechazo||''
+        ]);
+
+        if (formato === 'excel') {
+            const ExcelJS = require('exceljs');
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet('Regalos');
+            const hdr = ws.addRow(cols);
+            hdr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D2137' } };
+            datos.forEach(f => ws.addRow(f));
+            ws.columns.forEach(c => { c.width = 22; });
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename="regalos-bonos-${Date.now()}.xlsx"`);
+            await wb.xlsx.write(res);
+            return res.end();
+        }
+        // CSV (default)
+        const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const csv = [cols, ...datos].map(r => r.map(esc).join(',')).join('\n');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="regalos-bonos-${Date.now()}.csv"`);
+        res.send('﻿' + csv);
+    } catch (err) {
+        console.error('GET /regalos/reporte:', err.message);
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

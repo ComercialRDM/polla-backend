@@ -735,6 +735,33 @@ app.listen(PORT, async () => {
         console.error('Error aplicando seed Growth Checklist:', err.message);
     }
 
+    // ── Solicitudes de Regalo de Bono ─────────────────────────────────────────
+    try {
+        await pool.query(`ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS es_regalo BOOLEAN NOT NULL DEFAULT FALSE`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS solicitudes_regalo (
+                id                   SERIAL PRIMARY KEY,
+                transaccion_id       INTEGER NOT NULL UNIQUE REFERENCES transacciones(id),
+                usuario_id           INTEGER NOT NULL REFERENCES usuarios(id),
+                receptor_nombre      VARCHAR(200) NOT NULL,
+                receptor_cedula      VARCHAR(30)  NOT NULL,
+                receptor_celular     VARCHAR(20)  NOT NULL,
+                receptor_correo      VARCHAR(200),
+                acepta_terminos      BOOLEAN      NOT NULL DEFAULT FALSE,
+                estado               VARCHAR(20)  NOT NULL DEFAULT 'PENDIENTE',
+                motivo_rechazo       TEXT,
+                nueva_transaccion_id INTEGER REFERENCES transacciones(id),
+                admin_usuario_id     INTEGER REFERENCES admin_usuarios(id),
+                aprobado_en          TIMESTAMPTZ,
+                creado_en            TIMESTAMPTZ  NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_solicitudes_regalo_estado ON solicitudes_regalo(estado)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_solicitudes_regalo_usuario ON solicitudes_regalo(usuario_id)`);
+    } catch (err) {
+        console.error('Error aplicando migración solicitudes_regalo:', err.message);
+    }
+
     iniciarMonitorMarcadores();
     iniciarSincronizacionMundial();
 });

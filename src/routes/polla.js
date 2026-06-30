@@ -1136,4 +1136,82 @@ router.patch('/perfil-demografico', async (req, res) => {
     }
 });
 
+// ── Regalo de Bono ────────────────────────────────────────────────────────────
+// Usa token_acceso (polla token) para identificar la transacción, igual que
+// el resto de endpoints de polla (no requiere sesión de usuario separada).
+
+// POST /api/polla/regalo/solicitar
+router.post('/regalo/solicitar', async (req, res) => {
+    const { token_acceso, receptor_nombre, receptor_cedula, receptor_celular, receptor_correo, acepta_terminos } = req.body;
+    if (!token_acceso || !receptor_nombre?.trim() || !receptor_cedula?.trim() || !receptor_celular?.trim()) {
+        return res.status(400).json({ success: false, error: 'Faltan campos obligatorios' });
+    }
+    if (!acepta_terminos) {
+        return res.status(400).json({ success: false, error: 'Debes aceptar los términos para continuar' });
+    }
+    try {
+        const { rows: txRows } = await pool.query(
+            `SELECT id, saldo_bono, usuario_id FROM transacciones
+             WHERE token_acceso = $1 AND estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE`,
+            [token_acceso]
+        );
+        if (txRows.length === 0) return res.status(404).json({ success: false, error: 'Bono no encontrado o no elegible' });
+        if (txRows[0].saldo_bono <= 0) return res.status(400).json({ success: false, error: 'Este bono ya no tiene saldo' });
+
+        const { id: transaccion_id, usuario_id } = txRows[0];
+
+        const { rows: exist } = await pool.query(
+            `SELECT estado FROM solicitudes_regalo WHERE transaccion_id = $1`, [transaccion_id]
+        );
+        if (exist.length > 0) {
+            if (exist[0].estado === 'APROBADO') return res.status(400).json({ success: false, error: 'Este bono ya fue regalado' });
+            if (exist[0].estado === 'PENDIENTE') return res.status(400).json({ success: false, error: 'Ya tienes una solicitud pendiente para este bono' });
+        }
+
+        const celNorm = String(receptor_celular).replace(/[^0-9+]/g, '');
+        const { rows } = await pool.query(
+            `INSERT INTO solicitudes_regalo
+               (transaccion_id, usuario_id, receptor_nombre, receptor_cedula, receptor_celular, receptor_correo, acepta_terminos)
+             VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+             ON CONFLICT (transaccion_id) DO UPDATE
+               SET receptor_nombre   = EXCLUDED.receptor_nombre,
+                   receptor_cedula   = EXCLUDED.receptor_cedula,
+                   receptor_celular  = EXCLUDED.receptor_celular,
+                   receptor_correo   = EXCLUDED.receptor_correo,
+                   estado            = 'PENDIENTE',
+                   motivo_rechazo    = NULL
+             RETURNING id`,
+            [transaccion_id, usuario_id, receptor_nombre.trim(), receptor_cedula.trim(), celNorm, receptor_correo?.trim() || null]
+        );
+        res.json({ success: true, solicitud_id: rows[0].id });
+    } catch (err) {
+        console.error('POST /regalo/solicitar:', err.message);
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/polla/regalo/mis-solicitudes?token_acceso=
+router.get('/regalo/mis-solicitudes', async (req, res) => {
+    const { token_acceso } = req.query;
+    if (!token_acceso) return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+    try {
+        const { rows: txRows } = await pool.query(
+            `SELECT usuario_id FROM transacciones WHERE token_acceso = $1 LIMIT 1`, [token_acceso]
+        );
+        if (txRows.length === 0) return res.json({ success: true, solicitudes: [] });
+        const { rows } = await pool.query(
+            `SELECT sr.id, sr.estado, sr.receptor_nombre, sr.receptor_celular,
+                    sr.motivo_rechazo, sr.creado_en, sr.aprobado_en, t.saldo_bono
+             FROM solicitudes_regalo sr
+             JOIN transacciones t ON t.id = sr.transaccion_id
+             WHERE sr.usuario_id = $1
+             ORDER BY sr.creado_en DESC`,
+            [txRows[0].usuario_id]
+        );
+        res.json({ success: true, solicitudes: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

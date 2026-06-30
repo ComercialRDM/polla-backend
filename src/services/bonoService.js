@@ -72,14 +72,16 @@ async function asegurarTemplate() {
  * @param {{ nombre: string, saldoBono: number, valorPagado?: number, tokenAcceso: string, esTest?: boolean, esEspecial?: boolean }} datos
  * @returns {Promise<Buffer>}
  */
-async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, esTest, esEspecial }) {
+async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, esTest, esEspecial, esRegalo, nombreDonante }) {
     await asegurarTemplate();
 
     // La plantilla ya imprime el símbolo "$" y los paréntesis "(VALOR)", solo se reemplaza el número
     const valorFormateado = saldoBono.toLocaleString('es-CO');
 
-    // Reduce el tamaño de letra del nombre según longitud (alineado a la izquierda desde x:335)
-    const nombreFontSize = nombre.length > 30 ? 28 : nombre.length > 22 ? 34 : COORD.nombre.fontSize;
+    // Para bonos regalados el nombre va más pequeño (comparte espacio con la línea del donante)
+    const nombreFontSize = esRegalo
+        ? (nombre.length > 28 ? 24 : 30)
+        : (nombre.length > 30 ? 28 : nombre.length > 22 ? 34 : COORD.nombre.fontSize);
 
     // "Valor pagado" debajo del valor recibido, en números y en letras, para que el
     // cliente note el extra que le estamos dando sobre lo que pagó. Solo se imprime
@@ -98,6 +100,7 @@ async function generarImagenBono({ nombre, saldoBono, valorPagado, tokenAcceso, 
         <text x="${SEDES_TEXTO.x}" y="${SEDES_TEXTO.y}" font-family="Arial" font-size="${SEDES_TEXTO.fontSize}" font-weight="bold" fill="${SEDES_TEXTO.color}" text-anchor="middle">Barranquilla</text>
         <rect x="${FOOTER_COBERTURA.x}" y="${FOOTER_COBERTURA.y}" width="${FOOTER_COBERTURA.width}" height="${FOOTER_COBERTURA.height}" fill="${FOOTER_COBERTURA.fill}"/>
         <text x="${FOOTER_TEXTO.x}" y="${FOOTER_TEXTO.y}" font-family="Arial" font-size="${FOOTER_TEXTO.fontSize}" fill="${FOOTER_TEXTO.color}" text-anchor="middle">*Válido hasta el 1 de Marzo de 2027 / sedes en barranquilla</text>
+        ${esRegalo && nombreDonante ? `<text x="${COORD.nombre.x}" y="${COORD.nombre.y - 40}" font-family="Arial" font-size="19" fill="#666666" text-anchor="start">Regalado por: ${escapeXml(nombreDonante)}</text>` : ''}
         <text x="${COORD.nombre.x}" y="${COORD.nombre.y}" font-family="Arial" font-size="${nombreFontSize}" font-weight="bold" fill="${COORD.nombre.color}" text-anchor="start">${escapeXml(nombre)}</text>
         ${esTest ? `
         <g transform="rotate(-25 ${ANCHO / 2} ${ALTO / 2})">
