@@ -38,24 +38,25 @@ async function registrarBonoEnSheets({ transaccion, usuario, influencerNombre })
 }
 
 /**
- * Registra una venta atribuida a un influencer en su Sheet específico.
- * Solo se llama cuando transaccion.influencer_id está presente.
+ * Registra un Bono Especial (regalado a influencer para marketing) en el Sheet
+ * de influencers. Se llama desde especialesService al crear cada bono.
  */
-async function registrarInfluencerEnSheets({ transaccion, usuario, influencer }) {
+async function registrarBonoEspecialEnSheets({ transaccion, usuario, codigoAfiliado }) {
     if (!INFLUENCERS_URL || !SECRET) return;
     try {
         await _post(INFLUENCERS_URL, {
-            influencer_codigo: influencer.codigo_afiliado || '',
-            influencer_nombre: influencer.nombre || '',
-            cliente_nombre: usuario.nombre,
-            cliente_celular: usuario.celular,
-            valor_pagado: transaccion.valor_pagado,
+            nombre: usuario.nombre,
+            celular: usuario.celular,
+            correo: usuario.correo || '',
+            codigo_afiliado: codigoAfiliado || '',
+            saldo_bono: transaccion.saldo_bono,
             cupos: transaccion.intentos_totales,
             transaccion_id: transaccion.id,
+            token_acceso: transaccion.token_acceso,
         });
     } catch (err) {
         console.error('[Sheets influencers] error:', err.message);
     }
 }
 
-module.exports = { registrarBonoEnSheets, registrarInfluencerEnSheets };
+module.exports = { registrarBonoEnSheets, registrarBonoEspecialEnSheets };

@@ -3,7 +3,7 @@ const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoPorPlantilla } = require('./manychatService');
 const { registrarEvento } = require('./auditoriaService');
-const { registrarBonoEnSheets, registrarInfluencerEnSheets } = require('./sheetsService');
+const { registrarBonoEnSheets } = require('./sheetsService');
 
 /**
  * Aprueba una transacción de forma idempotente: solo actualiza si está PENDIENTE.
@@ -141,10 +141,6 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         if (!transaccion.es_especial && !transaccion.es_test) {
             registrarBonoEnSheets({ transaccion, usuario, influencerNombre: _influencer?.nombre || '' })
                 .catch(() => {});
-            if (_influencer) {
-                registrarInfluencerEnSheets({ transaccion, usuario, influencer: _influencer })
-                    .catch(() => {});
-            }
         }
 
         // A partir de aquí la transacción ya quedó APROBADA en la base de datos.

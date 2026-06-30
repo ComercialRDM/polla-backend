@@ -4,6 +4,7 @@ const { enviarCorreoBono } = require('./emailService');
 const { enviarBonoManyChat, enviarMensajeManyChat, enviarBonoPorPlantilla } = require('./manychatService');
 const { obtenerOcrearInfluencer } = require('./referidosService');
 const { normalizarCelular } = require('../utils/celular');
+const { registrarBonoEspecialEnSheets } = require('./sheetsService');
 
 const VALOR_BONO_ESPECIAL_DEFAULT = 500000;
 const INTENTOS_ESPECIAL_DEFAULT = 30;
@@ -95,6 +96,10 @@ async function crearBonosEspeciales({ personas, valorBono = VALOR_BONO_ESPECIAL_
             const influencer = await obtenerOcrearInfluencer(usuario.id, usuario.nombre);
             resultado.codigo_afiliado = influencer.codigo_afiliado;
             resultado.link_afiliado = `${process.env.FRONTEND_URL}/?aff=${influencer.codigo_afiliado}`;
+
+            // Registrar en Sheet de influencers (fire-and-forget)
+            registrarBonoEspecialEnSheets({ transaccion, usuario, codigoAfiliado: influencer.codigo_afiliado })
+                .catch(() => {});
 
             if (usuario.correo) {
                 try {
