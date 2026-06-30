@@ -62,7 +62,12 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
 }));
 app.use(cors({
-    origin: origenesPermitidos.length > 0 ? origenesPermitidos : ['http://localhost:5173'],
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return callback(null, true);
+        if (origenesPermitidos.length === 0 || origenesPermitidos.includes(origin)) return callback(null, true);
+        callback(new Error('Not allowed by CORS'));
+    },
 }));
 app.use(express.json({ limit: '2mb' }));
 
