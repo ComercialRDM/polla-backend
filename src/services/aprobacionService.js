@@ -1,7 +1,7 @@
 const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
-const { enviarBonoManyChat } = require('./manychatService');
+const { enviarBonoPorPlantilla } = require('./manychatService');
 const { registrarEvento } = require('./auditoriaService');
 
 /**
@@ -154,18 +154,16 @@ async function aprobarTransaccion({ transaccionId, pasarelaTransaccionId }) {
         // Enviar el bono y el acceso a la polla por WhatsApp
         try {
             const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${transaccion.token_acceso}`;
-            const mensaje = `¡Gracias por tu compra, ${usuario.nombre}! 🇨🇴\n\n`
-                + `🎫 Tu Bono Digital: $${transaccion.saldo_bono.toLocaleString('es-CO')} para servicios de La Retoucherie.\n`
-                + `📋 Código: ${transaccion.token_acceso}\n\n`
-                + `Presenta el QR de esta imagen en el local o dicta el código al momento de redimir.\n\n`
-                + `Ya quedaste inscrito en la Polla Mundialista para ${partido.equipo_local} vs ${partido.equipo_visitante} con ${transaccion.intentos_totales} intento(s).\n\n`
-                + `Ingresa aquí para registrar tu pronóstico: ${linkPolla}`;
 
-            const { subscriberId } = await enviarBonoManyChat({
+            const { subscriberId } = await enviarBonoPorPlantilla({
                 celular: usuario.celular,
-                mensaje,
-                imagenUrl: `${process.env.BACKEND_URL}/api/polla/bono/${transaccion.token_acceso}`,
                 subscriberId: usuario.manychat_subscriber_id,
+                nombre: usuario.nombre,
+                monto: `$${transaccion.saldo_bono.toLocaleString('es-CO')}`,
+                codigo: transaccion.token_acceso,
+                partido: `${partido.equipo_local} vs ${partido.equipo_visitante}`,
+                intentos: transaccion.intentos_totales,
+                link: linkPolla,
             });
 
             if (subscriberId && !usuario.manychat_subscriber_id) {

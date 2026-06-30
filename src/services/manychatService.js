@@ -52,23 +52,28 @@ async function manychatRequest(path, body, method = 'POST') {
 // y por eso nunca podía recuperar un contacto de WhatsApp ya existente.
 const CAMPO_WHATSAPP_ID_SYNC = 'whatsapp_id_sync';
 
-let fieldIdCache = null;
+let camposCache = null; // array de todos los custom fields, cargado una sola vez
+
+async function cargarCamposCache() {
+    if (!camposCache) {
+        const r = await manychatRequest('/fb/page/getCustomFields', null, 'GET');
+        camposCache = r?.data || [];
+    }
+    return camposCache;
+}
 
 /**
  * Obtiene el field_id numérico de un campo de usuario por su nombre
- * (findByCustomField lo exige por ID, no por nombre). Se cachea en memoria
- * porque el ID no cambia mientras no se borre y recree el campo.
+ * (findByCustomField lo exige por ID, no por nombre). Usa el caché global de
+ * todos los campos para no llamar a getCustomFields más de una vez por proceso.
  */
 async function obtenerFieldId(nombreCampo) {
-    if (fieldIdCache?.nombre === nombreCampo) return fieldIdCache.id;
-
-    const respuesta = await manychatRequest('/fb/page/getCustomFields', null, 'GET');
-    const campo = respuesta?.data?.find((f) => f.name === nombreCampo);
+    const campos = await cargarCamposCache();
+    const campo = campos.find((f) => f.name === nombreCampo);
     if (!campo) {
-        console.error(`No se encontró el campo de usuario "${nombreCampo}" en ManyChat (getCustomFields):`, JSON.stringify(respuesta));
+        console.error(`No se encontró el campo de usuario "${nombreCampo}" en ManyChat (getCustomFields)`);
         return null;
     }
-    fieldIdCache = { nombre: nombreCampo, id: campo.id };
     return campo.id;
 }
 
@@ -249,4 +254,66 @@ async function enviarBonoManyChat({ celular, mensaje, imagenUrl, subscriberId })
     });
 }
 
-module.exports = { enviarMensajeManyChat, enviarBonoManyChat, formatearCelularWhatsApp, obtenerSubscriberId };
+// flow_ns de la automatización "Sin título / Enviar Bono Plantilla" en ManyChat
+// (visible en la URL al editar el flow: /cms/files/<flow_ns>/edit)
+const FLOW_NS_BONO_PLANTILLA = 'content20260629223945_206218';
+
+/**
+ * Envía la confirmación de compra de bono por WhatsApp usando la plantilla
+ * aprobada por Meta (purchase_voucher_confirmed), que funciona fuera de la
+ * ventana de sesión de 24 horas porque es un mensaje de plantilla de utilidad.
+ * Puebla las 6 variables del template vía setCustomField y luego dispara el
+ * flow con sendFlow.
+ */
+async function enviarBonoPorPlantilla({ celular, subscriberId, nombre, monto, codigo, partido, intentos, link }) {
+    if (!MANYCHAT_API_KEY) {
+        console.warn('MANYCHAT_API_KEY no configurada, no se envía plantilla a', celular);
+        return { subscriberId: subscriberId || null };
+    }
+
+    let id = subscriberId;
+    if (!id) {
+        ({ subscriberId: id } = await obtenerSubscriberId(celular));
+    }
+    if (!id) throw new Error(`No se encontró el suscriptor de ManyChat para ${celular}`);
+
+    const campos = await cargarCamposCache();
+
+    const camposBono = [
+        { nombre: 'bono_nombre',    valor: nombre },
+        { nombre: 'bono_monto',     valor: monto },
+        { nombre: 'bono_codigo',    valor: codigo },
+        { nombre: 'bono_partido',   valor: partido },
+        { nombre: 'bono_intentos',  valor: String(intentos) },
+        { nombre: 'bono_link',      valor: link },
+    ];
+
+    for (const { nombre: nombreCampo, valor } of camposBono) {
+        const campo = campos.find((f) => f.name === nombreCampo);
+        if (!campo) {
+            console.warn(`[ManyChat] campo "${nombreCampo}" no encontrado en getCustomFields, se omite`);
+            continue;
+        }
+        const r = await manychatRequest('/fb/subscriber/setCustomField', {
+            subscriber_id: id,
+            field_id: campo.id,
+            field_value: valor,
+        });
+        if (r?.status !== 'success') {
+            console.warn(`[ManyChat] setCustomField ${nombreCampo}:`, JSON.stringify(r));
+        }
+    }
+
+    const resultado = await manychatRequest('/fb/sending/sendFlow', {
+        subscriber_id: id,
+        flow_ns: FLOW_NS_BONO_PLANTILLA,
+    });
+
+    if (resultado?.status !== 'success') {
+        throw new Error(`ManyChat sendFlow error: ${JSON.stringify(resultado)}`);
+    }
+
+    return { subscriberId: id };
+}
+
+module.exports = { enviarMensajeManyChat, enviarBonoManyChat, enviarBonoPorPlantilla, formatearCelularWhatsApp, obtenerSubscriberId };
