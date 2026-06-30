@@ -1,7 +1,7 @@
 const pool = require('../db');
 const { generarImagenBono } = require('./bonoService');
 const { enviarCorreoBono } = require('./emailService');
-const { enviarBonoManyChat, enviarMensajeManyChat } = require('./manychatService');
+const { enviarBonoManyChat, enviarMensajeManyChat, enviarBonoPorPlantilla } = require('./manychatService');
 const { obtenerOcrearInfluencer } = require('./referidosService');
 const { normalizarCelular } = require('../utils/celular');
 
@@ -158,7 +158,8 @@ async function crearBonosEspeciales({ personas, valorBono = VALOR_BONO_ESPECIAL_
 async function listarBonosEspeciales() {
     const { rows } = await pool.query(
         `SELECT t.id AS transaccion_id, t.token_acceso, t.saldo_bono, t.intentos_totales, t.intentos_usados,
-                t.fecha_creacion, u.id AS usuario_id, u.nombre, u.celular, u.correo,
+                t.fecha_creacion, t.whatsapp_bono_at, t.whatsapp_invitacion_at,
+                u.id AS usuario_id, u.nombre, u.celular, u.correo,
                 i.codigo_afiliado, i.porcentaje_comision
          FROM transacciones t
          JOIN usuarios u ON u.id = t.usuario_id
@@ -212,6 +213,48 @@ async function enviarInvitacionDifusion(transaccionId) {
     if (subscriberId && !manychat_subscriber_id) {
         await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = (SELECT usuario_id FROM transacciones WHERE id = $2)', [String(subscriberId), transaccionId]);
     }
+
+    await pool.query('UPDATE transacciones SET whatsapp_invitacion_at = NOW() WHERE id = $1', [transaccionId]);
+
+    return { enviado: true };
+}
+
+/**
+ * Reenvía la confirmación de bono por WhatsApp usando la plantilla aprobada.
+ * Útil cuando el envío inicial falló (el suscriptor no existía en ManyChat aún).
+ */
+async function reenviarBonoWhatsApp(transaccionId) {
+    const { rows } = await pool.query(
+        `SELECT t.token_acceso, t.saldo_bono, t.intentos_totales,
+                u.nombre, u.celular, u.id AS usuario_id, u.manychat_subscriber_id,
+                p.equipo_local, p.equipo_visitante
+         FROM transacciones t
+         JOIN usuarios u ON u.id = t.usuario_id
+         LEFT JOIN partidos p ON p.id = t.partido_id
+         WHERE t.id = $1 AND t.es_especial = TRUE`,
+        [transaccionId]
+    );
+    if (rows.length === 0) throw new Error('Bono Especial no encontrado');
+
+    const { token_acceso, saldo_bono, intentos_totales, nombre, celular, usuario_id, manychat_subscriber_id, equipo_local, equipo_visitante } = rows[0];
+    const linkPolla = `${process.env.FRONTEND_URL}/polla?token=${token_acceso}`;
+
+    const { subscriberId } = await enviarBonoPorPlantilla({
+        celular,
+        subscriberId: manychat_subscriber_id,
+        nombre,
+        monto: `$${Number(saldo_bono).toLocaleString('es-CO')}`,
+        codigo: token_acceso,
+        partido: equipo_local && equipo_visitante ? `${equipo_local} vs ${equipo_visitante}` : 'Próximo partido',
+        intentos: intentos_totales,
+        link: linkPolla,
+    });
+
+    if (subscriberId && !manychat_subscriber_id) {
+        await pool.query('UPDATE usuarios SET manychat_subscriber_id = $1 WHERE id = $2', [String(subscriberId), usuario_id]);
+    }
+
+    await pool.query('UPDATE transacciones SET whatsapp_bono_at = NOW() WHERE id = $1', [transaccionId]);
 
     return { enviado: true };
 }
@@ -278,6 +321,7 @@ module.exports = {
     crearBonosEspeciales,
     listarBonosEspeciales,
     enviarInvitacionDifusion,
+    reenviarBonoWhatsApp,
     obtenerRankingEspeciales,
     VALOR_BONO_ESPECIAL_DEFAULT,
     INTENTOS_ESPECIAL_DEFAULT,

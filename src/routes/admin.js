@@ -9,7 +9,7 @@ const { generarToken } = require('../utils/adminTokens');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
-const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, obtenerRankingEspeciales } = require('../services/especialesService');
+const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, reenviarBonoWhatsApp, obtenerRankingEspeciales } = require('../services/especialesService');
 const { registrarEvento } = require('../services/auditoriaService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
@@ -667,6 +667,19 @@ router.post('/especiales/:id/invitar', async (req, res) => {
         return res.json({ success: true, ...resultado });
     } catch (err) {
         console.error('Error en /admin/especiales/:id/invitar:', err);
+        return res.status(500).json({ success: false, error: err.message || 'Error interno' });
+    }
+});
+
+// POST /api/admin/especiales/:id/reenviar-bono
+// Reenvía la confirmación de bono por WhatsApp usando la plantilla aprobada.
+// Útil cuando el envío inicial falló porque el suscriptor no existía en ManyChat.
+router.post('/especiales/:id/reenviar-bono', async (req, res) => {
+    try {
+        const resultado = await reenviarBonoWhatsApp(Number(req.params.id));
+        return res.json({ success: true, ...resultado });
+    } catch (err) {
+        console.error('Error en /admin/especiales/:id/reenviar-bono:', err);
         return res.status(500).json({ success: false, error: err.message || 'Error interno' });
     }
 });
