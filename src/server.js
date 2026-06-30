@@ -20,6 +20,7 @@ const passkeysRouter  = require('./routes/passkeys');
 const influencersRouter = require('./routes/influencers');
 const referidosRouter = require('./routes/referidos');
 const gruposRouter = require('./routes/grupos');
+const checklistRouter = require('./routes/checklist');
 const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -87,6 +88,7 @@ app.use('/api/passkey', authLimiter, passkeysRouter);
 app.use('/api/influencers', influencersLimiter, influencersRouter);
 app.use('/api/referidos', clicLimiter, referidosRouter);
 app.use('/api/grupo', pollaLimiter, gruposRouter);
+app.use('/api/admin/checklist', adminLimiter, checklistRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
@@ -569,6 +571,168 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE auditoria_eventos ADD COLUMN IF NOT EXISTS user_agent TEXT`);
     } catch (err) {
         console.error('Error aplicando migración de user_agent en auditoria_eventos:', err.message);
+    }
+
+    // ── Growth Checklist ─────────────────────────────────────────────────────
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_categorias (
+                id        SERIAL PRIMARY KEY,
+                nombre    VARCHAR(100) NOT NULL,
+                color     VARCHAR(20)  NOT NULL DEFAULT '#f59e0b',
+                orden     INTEGER      NOT NULL DEFAULT 0,
+                activa    BOOLEAN      NOT NULL DEFAULT TRUE,
+                creado_en TIMESTAMPTZ  NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_actividades (
+                id               SERIAL PRIMARY KEY,
+                categoria_id     INTEGER NOT NULL REFERENCES checklist_categorias(id) ON DELETE CASCADE,
+                titulo           VARCHAR(200) NOT NULL,
+                descripcion      TEXT,
+                prioridad        VARCHAR(20)  NOT NULL DEFAULT 'normal',
+                obligatoria      BOOLEAN      NOT NULL DEFAULT FALSE,
+                activa           BOOLEAN      NOT NULL DEFAULT TRUE,
+                orden            INTEGER      NOT NULL DEFAULT 0,
+                impacto_esperado TEXT,
+                creado_en        TIMESTAMPTZ  NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_checks (
+                id               SERIAL PRIMARY KEY,
+                actividad_id     INTEGER NOT NULL REFERENCES checklist_actividades(id) ON DELETE CASCADE,
+                fecha            DATE    NOT NULL,
+                completada       BOOLEAN NOT NULL DEFAULT FALSE,
+                nota             TEXT,
+                valor_ejecutado  NUMERIC(14,0),
+                admin_usuario_id INTEGER REFERENCES admin_usuarios(id),
+                actualizado_en   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(actividad_id, fecha)
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_checklist_checks_fecha ON checklist_checks(fecha)`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_notas_dia (
+                id               SERIAL PRIMARY KEY,
+                fecha            DATE        NOT NULL,
+                tipo             VARCHAR(20) NOT NULL CHECK (tipo IN ('standup','cierre')),
+                contenido        TEXT        NOT NULL,
+                admin_usuario_id INTEGER REFERENCES admin_usuarios(id),
+                enviado_en       TIMESTAMPTZ,
+                creado_en        TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(fecha, tipo)
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_plantillas (
+                id          SERIAL PRIMARY KEY,
+                nombre      VARCHAR(100) NOT NULL,
+                descripcion TEXT,
+                creado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS checklist_plantilla_items (
+                id           SERIAL PRIMARY KEY,
+                plantilla_id INTEGER NOT NULL REFERENCES checklist_plantillas(id) ON DELETE CASCADE,
+                actividad_id INTEGER NOT NULL REFERENCES checklist_actividades(id) ON DELETE CASCADE,
+                orden        INTEGER NOT NULL DEFAULT 0
+            )
+        `);
+    } catch (err) {
+        console.error('Error aplicando migración Growth Checklist:', err.message);
+    }
+
+    // Seed inicial de categorías y actividades del Growth Checklist
+    try {
+        const { rows: catRows } = await pool.query('SELECT COUNT(*)::int AS total FROM checklist_categorias');
+        if (catRows[0].total === 0) {
+            const seed = [
+                { nombre: 'Ventas directas',   color: '#22c55e', orden: 1, actividades: [
+                    'Revisar ventas del día anterior por canal',
+                    'Actualizar meta diaria',
+                    'Seguimiento a leads calientes',
+                    'Revisar compradores potenciales de bonos altos',
+                ]},
+                { nombre: 'CRM',               color: '#3b82f6', orden: 2, actividades: [
+                    'Clasificar leads calientes/tibios/fríos',
+                    'Revisar leads sin respuesta',
+                    'Actualizar notas comerciales',
+                ]},
+                { nombre: 'Email',             color: '#8b5cf6', orden: 3, actividades: [
+                    'Enviar email del segmento del día',
+                    'Revisar aperturas y clics',
+                    'Definir siguiente test A/B',
+                ]},
+                { nombre: 'SMS / WhatsApp',    color: '#06b6d4', orden: 4, actividades: [
+                    'Enviar lote del día',
+                    'Revisar respuestas',
+                    'Revisar clics y conversiones',
+                ]},
+                { nombre: 'Influencers',       color: '#f59e0b', orden: 5, actividades: [
+                    'Validar publicaciones del día',
+                    'Confirmar piezas pendientes',
+                    'Revisar rendimiento por influencer',
+                ]},
+                { nombre: 'Microinfluencers',  color: '#f97316', orden: 6, actividades: [
+                    'Coordinar historias del día',
+                    'Verificar uso del enlace correcto',
+                    'Revisar mejores perfiles',
+                ]},
+                { nombre: 'Ads / Pauta',       color: '#ef4444', orden: 7, actividades: [
+                    'Revisar campañas activas',
+                    'Apagar anuncios flojos',
+                    'Subir presupuesto a ganadores',
+                    'Probar nueva creatividad',
+                ]},
+                { nombre: 'Landing / CRO',     color: '#ec4899', orden: 8, actividades: [
+                    'Revisar conversión',
+                    'Revisar scroll/clicks',
+                    'Revisar errores en checkout',
+                    'Ajustar copy principal',
+                ]},
+                { nombre: 'Analítica',         color: '#14b8a6', orden: 9, actividades: [
+                    'Revisar revenue por canal',
+                    'Revisar avance vs meta',
+                    'Revisar mejor fuente/campaña',
+                ]},
+                { nombre: 'Operación',         color: '#64748b', orden: 10, actividades: [
+                    'Revisar Wompi',
+                    'Revisar links de compra',
+                    'Revisar capacidad operativa/redención',
+                    'Revisar FAQs repetidas',
+                ]},
+                { nombre: 'Social Proof',      color: '#a855f7', orden: 11, actividades: [
+                    'Pedir testimonios',
+                    'Publicar prueba social',
+                    'Mostrar avance de premio o ventas',
+                ]},
+                { nombre: 'Cierre comercial',  color: '#0ea5e9', orden: 12, actividades: [
+                    'Registrar bloqueos',
+                    'Registrar aprendizajes',
+                    'Registrar prioridades de mañana',
+                ]},
+            ];
+            for (const cat of seed) {
+                const { rows: catR } = await pool.query(
+                    `INSERT INTO checklist_categorias (nombre, color, orden) VALUES ($1, $2, $3) RETURNING id`,
+                    [cat.nombre, cat.color, cat.orden]
+                );
+                const catId = catR[0].id;
+                for (let i = 0; i < cat.actividades.length; i++) {
+                    await pool.query(
+                        `INSERT INTO checklist_actividades (categoria_id, titulo, orden) VALUES ($1, $2, $3)`,
+                        [catId, cat.actividades[i], i]
+                    );
+                }
+            }
+            console.log('Seed inicial de Growth Checklist aplicado.');
+        }
+    } catch (err) {
+        console.error('Error aplicando seed Growth Checklist:', err.message);
     }
 
     iniciarMonitorMarcadores();

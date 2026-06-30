@@ -299,4 +299,34 @@ async function enviarCorreoResetLocalPassword({ destinatario, nombre, tempPass }
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword };
+/**
+ * Envía el standup o cierre del día del Growth Checklist a comercial@retoucherie.com.co.
+ */
+async function enviarCorreoChecklist({ tipo, fecha, contenido, usuario }) {
+    const transporter = crearTransporter();
+    const tipoLabel = tipo === 'standup' ? 'Standup' : 'Cierre del día';
+    const asunto = `[Checklist Diario] ${tipoLabel} - ${fecha}`;
+    const contenidoHtml = contenido
+        .split('\n')
+        .map((l) => `<p style="margin:4px 0;">${l || '&nbsp;'}</p>`)
+        .join('');
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h2 style="color: #f59e0b;">${tipoLabel} — ${fecha}</h2>
+        <p style="color: #71717a; font-size: 13px;">Enviado por <strong>${usuario}</strong></p>
+        <div style="background: #f4f4f5; border-radius: 8px; padding: 16px 20px; margin-top: 16px; white-space: pre-wrap; line-height: 1.6;">
+            ${contenidoHtml}
+        </div>
+        <p style="font-size: 11px; color: #a1a1aa; margin-top: 24px;">Growth Checklist · La Retoucherie de Manuela</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: BCC_COMERCIAL,
+        subject: asunto,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist };
