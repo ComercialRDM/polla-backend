@@ -226,6 +226,12 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_imagen BYTEA;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_mime TEXT;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ranking_snapshot_influencer JSONB;
 
+-- Moderación de fotos de perfil: la foto queda en 'pendiente' hasta que el admin
+-- la aprueba o rechaza. NULL = nunca subió foto.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_estado VARCHAR(20) DEFAULT NULL
+    CHECK (foto_estado IN ('pendiente', 'aprobada', 'rechazada'));
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_razon_rechazo TEXT;
+
 -- ============================================================
 -- Sistema de afiliados/comisiones para influencers.
 -- codigo_afiliado es público (va en los links que comparten) y NUNCA otorga

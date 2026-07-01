@@ -2017,6 +2017,86 @@ router.get('/regalos/reporte', async (req, res) => {
     }
 });
 
+// ── Moderación de fotos de perfil ──────────────────────────────────────────
+
+// GET /api/admin/fotos-pendientes - lista usuarios con foto en estado 'pendiente'
+router.get('/fotos-pendientes', adminAuth, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT u.id AS usuario_id, u.nombre, u.celular, u.correo,
+                   u.foto_mime, u.foto_estado,
+                   (SELECT COUNT(*) FROM transacciones t
+                    WHERE t.usuario_id = u.id AND t.estado_pago = 'APROBADO') AS bonos_aprobados,
+                   (inf.id IS NOT NULL) AS es_influencer
+            FROM usuarios u
+            LEFT JOIN influencers inf ON inf.usuario_id = u.id
+            WHERE u.foto_estado = 'pendiente'
+            ORDER BY u.id DESC
+        `);
+        return res.json({ success: true, fotos: rows });
+    } catch (err) {
+        console.error('GET /admin/fotos-pendientes:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/fotos/:usuarioId/preview - sirve la imagen para vista previa en el panel
+router.get('/fotos/:usuarioId/preview', adminAuth, async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            'SELECT foto_imagen, foto_mime FROM usuarios WHERE id = $1 AND foto_imagen IS NOT NULL',
+            [req.params.usuarioId]
+        );
+        if (rows.length === 0) return res.status(404).send('Sin foto');
+        res.set('Content-Type', rows[0].foto_mime || 'image/jpeg');
+        res.set('Cache-Control', 'no-store');
+        return res.send(rows[0].foto_imagen);
+    } catch (err) {
+        console.error('GET /admin/fotos/:id/preview:', err.message);
+        return res.status(500).send('Error interno');
+    }
+});
+
+// POST /api/admin/fotos/:usuarioId/aprobar - aprueba y publica la foto
+router.post('/fotos/:usuarioId/aprobar', adminAuth, async (req, res) => {
+    const usuarioId = Number(req.params.usuarioId);
+    if (!usuarioId) return res.status(400).json({ success: false, error: 'ID inválido' });
+    try {
+        const { rows } = await pool.query(
+            `UPDATE usuarios SET foto_estado = 'aprobada', foto_razon_rechazo = NULL
+             WHERE id = $1 AND foto_imagen IS NOT NULL RETURNING id, nombre`,
+            [usuarioId]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Usuario sin foto pendiente' });
+        await registrarEvento({ tabla: 'usuarios', registroId: String(usuarioId), accion: 'foto_aprobada', actor: 'admin' });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('POST /admin/fotos/:id/aprobar:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/fotos/:usuarioId/rechazar - rechaza la foto y notifica al usuario
+router.post('/fotos/:usuarioId/rechazar', adminAuth, async (req, res) => {
+    const usuarioId = Number(req.params.usuarioId);
+    const razon = String(req.body.razon || '').trim();
+    if (!usuarioId) return res.status(400).json({ success: false, error: 'ID inválido' });
+    if (!razon) return res.status(400).json({ success: false, error: 'Indica el motivo del rechazo' });
+    try {
+        const { rows } = await pool.query(
+            `UPDATE usuarios SET foto_estado = 'rechazada', foto_razon_rechazo = $1
+             WHERE id = $2 RETURNING id, nombre, correo`,
+            [razon, usuarioId]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Usuario no encontrado' });
+        await registrarEvento({ tabla: 'usuarios', registroId: String(usuarioId), accion: 'foto_rechazada', actor: 'admin', payload_despues: { razon } });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('POST /admin/fotos/:id/rechazar:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/dispositivos - estadísticas de dispositivos y PWA instalaciones
 router.get('/dispositivos', async (req, res) => {
     try {

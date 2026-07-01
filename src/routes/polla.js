@@ -136,21 +136,35 @@ router.get('/info', async (req, res) => {
         const { rows } = await pool.query(
             `SELECT t.usuario_id, t.es_especial, u.nombre, u.equipos_favoritos, u.calendario_token,
                     t.valor_pagado, t.saldo_bono, t.attribution_group,
-                    (u.foto_imagen IS NOT NULL) AS tiene_foto,
+                    (u.foto_imagen IS NOT NULL AND u.foto_estado = 'aprobada') AS tiene_foto,
+                    u.foto_estado, u.foto_razon_rechazo,
                     (u.password_hash IS NOT NULL) AS tiene_cuenta,
-                    u.fecha_nacimiento, u.sexo
+                    u.fecha_nacimiento, u.sexo,
+                    (inf.id IS NOT NULL) AS es_influencer
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
+             LEFT JOIN influencers inf ON inf.usuario_id = u.id
              WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
              LIMIT 1`,
             [token_acceso]
         );
 
         if (rows.length === 0) {
+            // Verificar si existe una transacción PENDIENTE (pago por transferencia aún sin confirmar)
+            const { rows: pendienteRows } = await pool.query(
+                `SELECT u.nombre FROM transacciones t
+                 JOIN usuarios u ON u.id = t.usuario_id
+                 WHERE t.token_acceso = $1 AND t.estado_pago = 'PENDIENTE'
+                 LIMIT 1`,
+                [token_acceso]
+            );
+            if (pendienteRows.length > 0) {
+                return res.json({ acceso: false, pendiente_verificacion: true, nombre: pendienteRows[0].nombre });
+            }
             return res.json({ acceso: false });
         }
 
-        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group, tiene_foto, tiene_cuenta, fecha_nacimiento, sexo } = rows[0];
+        const { usuario_id, es_especial, nombre, equipos_favoritos, calendario_token, valor_pagado, saldo_bono, attribution_group, tiene_foto, foto_estado, foto_razon_rechazo, tiene_cuenta, fecha_nacimiento, sexo, es_influencer } = rows[0];
 
         const saldo = await obtenerSaldoUsuario(usuario_id);
 
@@ -183,7 +197,10 @@ router.get('/info', async (req, res) => {
             acceso: true,
             nombre,
             es_especial,
+            es_influencer: !!es_influencer,
             tiene_foto,
+            foto_estado: foto_estado || null,
+            foto_razon_rechazo: foto_razon_rechazo || null,
             tiene_cuenta,
             usuario_id,
             equipos_favoritos: equipos_favoritos || [],
@@ -213,7 +230,7 @@ router.get('/info', async (req, res) => {
 router.get('/foto-influencer/:usuarioId', async (req, res) => {
     try {
         const { rows } = await pool.query(
-            'SELECT foto_imagen, foto_mime FROM usuarios WHERE id = $1',
+            `SELECT foto_imagen, foto_mime FROM usuarios WHERE id = $1 AND foto_estado = 'aprobada'`,
             [req.params.usuarioId]
         );
         if (rows.length === 0 || !rows[0].foto_imagen) {
@@ -311,6 +328,18 @@ router.get('/verificar-acceso', async (req, res) => {
         );
 
         if (rows.length === 0) {
+            // Verificar PENDIENTE para usuarios que pagaron por transferencia
+            const { rows: pRows } = await pool.query(
+                `SELECT t.token_acceso FROM transacciones t
+                 JOIN usuarios u ON u.id = t.usuario_id
+                 WHERE (u.correo = $1 OR u.celular = $1)
+                   AND t.estado_pago = 'PENDIENTE'
+                 ORDER BY t.id DESC LIMIT 1`,
+                [contacto]
+            );
+            if (pRows.length > 0) {
+                return res.json({ acceso: false, pendiente_verificacion: true, token_acceso: pRows[0].token_acceso });
+            }
             return res.json({ acceso: false });
         }
 
@@ -1059,7 +1088,8 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            `UPDATE usuarios SET foto_imagen = $1, foto_mime = $2
+            `UPDATE usuarios
+             SET foto_imagen = $1, foto_mime = $2, foto_estado = 'pendiente', foto_razon_rechazo = NULL
              WHERE id = (
                  SELECT u.id FROM transacciones t
                  JOIN usuarios u ON u.id = t.usuario_id
@@ -1074,7 +1104,7 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
             return res.status(403).json({ success: false, error: 'Token no válido o bono no encontrado' });
         }
 
-        return res.json({ success: true });
+        return res.json({ success: true, mensaje: 'Foto recibida. Se revisará en las próximas horas.' });
     } catch (err) {
         console.error('Error en /polla/foto-perfil:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
