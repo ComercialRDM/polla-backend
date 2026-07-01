@@ -1138,6 +1138,44 @@ router.patch('/perfil-demografico', async (req, res) => {
     }
 });
 
+// PATCH /api/polla/dispositivo - registra el tipo de dispositivo del usuario y si instaló la PWA
+router.patch('/dispositivo', async (req, res) => {
+    const { token_acceso, dispositivo, pwa_instalada } = req.body;
+    if (!token_acceso) return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+
+    const DISPOSITIVOS_VALIDOS = ['ios', 'android', 'desktop'];
+    if (dispositivo && !DISPOSITIVOS_VALIDOS.includes(dispositivo)) {
+        return res.status(400).json({ success: false, error: 'Dispositivo inválido' });
+    }
+
+    try {
+        const { rows: txRows } = await pool.query(
+            `SELECT u.id FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO'
+             LIMIT 1`,
+            [token_acceso]
+        );
+        if (txRows.length === 0) return res.status(403).json({ success: false, error: 'Token inválido' });
+        const usuarioId = txRows[0].id;
+
+        const campos = [];
+        const valores = [];
+        if (dispositivo) { campos.push(`dispositivo = $${campos.length + 1}`); valores.push(dispositivo); }
+        if (pwa_instalada === true) { campos.push(`pwa_instalada = TRUE`); }
+
+        if (campos.length === 0) return res.status(400).json({ success: false, error: 'Sin campos para actualizar' });
+
+        valores.push(usuarioId);
+        await pool.query(`UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length}`, valores);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en PATCH /polla/dispositivo:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // ── Regalo de Bono ────────────────────────────────────────────────────────────
 // Usa token_acceso (polla token) para identificar la transacción, igual que
 // el resto de endpoints de polla (no requiere sesión de usuario separada).

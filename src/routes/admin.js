@@ -2017,4 +2017,24 @@ router.get('/regalos/reporte', async (req, res) => {
     }
 });
 
+// GET /api/admin/dispositivos - estadísticas de dispositivos y PWA instalaciones
+router.get('/dispositivos', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE NOT COALESCE(es_test, FALSE))                             AS total,
+                COUNT(*) FILTER (WHERE dispositivo = 'ios'     AND NOT COALESCE(es_test, FALSE)) AS ios,
+                COUNT(*) FILTER (WHERE dispositivo = 'android' AND NOT COALESCE(es_test, FALSE)) AS android,
+                COUNT(*) FILTER (WHERE dispositivo = 'desktop' AND NOT COALESCE(es_test, FALSE)) AS desktop,
+                COUNT(*) FILTER (WHERE pwa_instalada = TRUE    AND NOT COALESCE(es_test, FALSE)) AS pwa_instaladas,
+                COUNT(*) FILTER (WHERE dispositivo IS NOT NULL AND NOT COALESCE(es_test, FALSE)) AS con_dispositivo
+            FROM usuarios
+        `);
+        return res.json({ success: true, stats: rows[0] });
+    } catch (err) {
+        console.error('GET /admin/dispositivos:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;

@@ -767,6 +767,13 @@ app.listen(PORT, async () => {
         console.error('Error aplicando migración solicitudes_regalo:', err.message);
     }
 
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS dispositivo TEXT`);
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS pwa_instalada BOOLEAN NOT NULL DEFAULT FALSE`);
+    } catch (err) {
+        console.error('Error aplicando migración de dispositivo/pwa_instalada:', err.message);
+    }
+
     iniciarMonitorMarcadores();
     iniciarSincronizacionMundial();
 });
