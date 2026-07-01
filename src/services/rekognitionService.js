@@ -39,8 +39,10 @@ const LABELS_RECHAZO_AUTO = new Set([
 /**
  * Analiza una imagen con AWS Rekognition.
  * @param {Buffer} imageBuffer - Bytes de la imagen
- * @returns {{ rechazar: boolean, razon: string | null } | null}
- *   null = Rekognition no está configurado (usar cola manual)
+ * @returns {{ rechazar: boolean, aprobar: boolean, razon: string | null } | null}
+ *   null     = Rekognition no está configurado o falló → usar cola manual
+ *   rechazar = contenido inapropiado detectado → auto-rechazar
+ *   aprobar  = Rekognition no encontró nada malo → auto-aprobar sin revisión manual
  */
 async function checkearFoto(imageBuffer) {
     const client = crearCliente();
@@ -54,20 +56,22 @@ async function checkearFoto(imageBuffer) {
         const response = await client.send(command);
         const labels = response.ModerationLabels || [];
 
-        const labelEncontrado = labels.find(
+        const labelMalo = labels.find(
             (l) => LABELS_RECHAZO_AUTO.has(l.Name) || LABELS_RECHAZO_AUTO.has(l.ParentName)
         );
 
-        if (labelEncontrado) {
+        if (labelMalo) {
             return {
                 rechazar: true,
+                aprobar: false,
                 razon: 'La foto fue rechazada automáticamente por contener contenido inapropiado.',
             };
         }
 
-        return { rechazar: false, razon: null };
+        // Rekognition analizó la foto y no encontró nada malo → aprobar directo
+        return { rechazar: false, aprobar: true, razon: null };
     } catch (err) {
-        // Si Rekognition falla, no bloqueamos al usuario — cae a cola manual
+        // Si Rekognition falla, cae a cola manual sin bloquear al usuario
         console.error('Rekognition error (fallback a manual):', err.message);
         return null;
     }

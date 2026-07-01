@@ -1088,11 +1088,15 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
 
     try {
         // Análisis automático con Rekognition (si está configurado).
-        // null = no configurado → cae a cola manual sin bloquear al usuario.
+        // null  = no configurado o falló → cola manual ('pendiente')
+        // aprobar = true  → auto-aprobada, visible de inmediato
+        // rechazar = true → auto-rechazada, no se guarda en DB visible
         const { checkearFoto } = require('../services/rekognitionService');
         const analisis = await checkearFoto(req.file.buffer);
 
-        const estadoFoto = analisis?.rechazar ? 'rechazada' : 'pendiente';
+        const estadoFoto = analisis?.rechazar ? 'rechazada'
+            : analisis?.aprobar ? 'aprobada'
+            : 'pendiente';
         const razonRechazo = analisis?.rechazar ? analisis.razon : null;
 
         const { rows } = await pool.query(
@@ -1116,7 +1120,13 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
             return res.status(422).json({ success: false, error: analisis.razon });
         }
 
-        return res.json({ success: true, mensaje: 'Foto recibida. Se revisará en las próximas horas.' });
+        return res.json({
+            success: true,
+            aprobada: analisis?.aprobar === true,
+            mensaje: analisis?.aprobar
+                ? 'Foto de perfil actualizada.'
+                : 'Foto recibida. Se revisará en las próximas horas.',
+        });
     } catch (err) {
         console.error('Error en /polla/foto-perfil:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
