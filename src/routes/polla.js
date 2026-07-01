@@ -1254,4 +1254,30 @@ router.get('/regalo/mis-solicitudes', async (req, res) => {
     }
 });
 
+// GET /api/polla/actividad-reciente - últimas compras aprobadas (solo primer nombre + valor + tiempo)
+router.get('/actividad-reciente', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT
+                split_part(u.nombre, ' ', 1) AS primer_nombre,
+                t.saldo_bono,
+                t.fecha_creacion
+             FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.estado_pago = 'APROBADO'
+               AND NOT COALESCE(t.es_test, FALSE)
+               AND NOT COALESCE(u.es_test, FALSE)
+               AND u.nombre IS NOT NULL
+               AND u.nombre <> ''
+             ORDER BY t.fecha_creacion DESC
+             LIMIT 20`,
+            []
+        );
+        return res.json({ success: true, actividad: rows });
+    } catch (err) {
+        console.error('GET /polla/actividad-reciente:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 module.exports = router;
