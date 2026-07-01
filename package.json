@@ -12,6 +12,7 @@
     "backup": "node src/scripts/backupDiario.js"
   },
   "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.726.0",
     "@img/sharp-wasm32": "^0.35.1",
     "@sentry/node": "^10.57.0",
     "@simplewebauthn/server": "^13.3.1",
