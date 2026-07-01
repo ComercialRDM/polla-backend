@@ -1087,9 +1087,17 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
     }
 
     try {
+        // Análisis automático con Rekognition (si está configurado).
+        // null = no configurado → cae a cola manual sin bloquear al usuario.
+        const { checkearFoto } = require('../services/rekognitionService');
+        const analisis = await checkearFoto(req.file.buffer);
+
+        const estadoFoto = analisis?.rechazar ? 'rechazada' : 'pendiente';
+        const razonRechazo = analisis?.rechazar ? analisis.razon : null;
+
         const { rows } = await pool.query(
             `UPDATE usuarios
-             SET foto_imagen = $1, foto_mime = $2, foto_estado = 'pendiente', foto_razon_rechazo = NULL
+             SET foto_imagen = $1, foto_mime = $2, foto_estado = $4, foto_razon_rechazo = $5
              WHERE id = (
                  SELECT u.id FROM transacciones t
                  JOIN usuarios u ON u.id = t.usuario_id
@@ -1097,11 +1105,15 @@ router.post('/foto-perfil', uploadFoto.single('foto'), async (req, res) => {
                  LIMIT 1
              )
              RETURNING id`,
-            [req.file.buffer, mime, token_acceso]
+            [req.file.buffer, mime, token_acceso, estadoFoto, razonRechazo]
         );
 
         if (rows.length === 0) {
             return res.status(403).json({ success: false, error: 'Token no válido o bono no encontrado' });
+        }
+
+        if (analisis?.rechazar) {
+            return res.status(422).json({ success: false, error: analisis.razon });
         }
 
         return res.json({ success: true, mensaje: 'Foto recibida. Se revisará en las próximas horas.' });
