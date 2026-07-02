@@ -52,6 +52,18 @@ router.get('/metricas', async (req, res) => {
              GROUP BY estado_pago`
         );
 
+        const { rows: usuariosRows } = await pool.query(
+            `SELECT
+                COUNT(*)::int AS total_usuarios,
+                COUNT(CASE WHEN t.usuario_id IS NOT NULL THEN 1 END)::int AS usuarios_pagados
+             FROM usuarios u
+             LEFT JOIN (
+                 SELECT DISTINCT usuario_id FROM transacciones
+                 WHERE estado_pago = 'APROBADO'
+             ) t ON t.usuario_id = u.id
+             WHERE u.es_test = FALSE`
+        );
+
         const checkout = { PENDIENTE: 0, APROBADO: 0, RECHAZADO: 0 };
         let totalCheckout = 0;
         for (const fila of checkoutRows) {
@@ -70,6 +82,8 @@ router.get('/metricas', async (req, res) => {
         return res.json({
             success: true,
             ingresosActuales: Number(ingresosRows[0].ingresos_actuales),
+            totalUsuarios: usuariosRows[0]?.total_usuarios || 0,
+            usuariosPagados: usuariosRows[0]?.usuarios_pagados || 0,
             metaIngresos: META_INGRESOS,
             fechaMeta: FECHA_META,
             diasRestantes: diasRestantesHasta(),
