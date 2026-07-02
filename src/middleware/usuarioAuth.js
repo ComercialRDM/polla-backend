@@ -1,14 +1,15 @@
 const { verificarToken } = require('../utils/userTokens');
 
-// Middleware de autenticación para clientes finales (no admin/local). Resuelve
-// la identidad del usuario a partir de un token firmado en vez de confiar en
-// un usuario_id que el cliente pueda mandar libremente (eso era un IDOR: ver
-// /api/polla/resumen-usuario y /api/polla/mis-pronosticos antes de este fix).
+// Acepta el token de sesión desde la cookie httpOnly (nueva) o desde
+// el header Authorization: Bearer (fallback para sesiones antiguas).
 function usuarioAuth(req, res, next) {
+    const cookie = req.cookies?.polla_token;
     const header = req.headers.authorization || '';
-    const [tipo, token] = header.split(' ');
+    const [tipo, headerToken] = header.split(' ');
 
-    if (tipo !== 'Bearer' || !token) {
+    const token = cookie || (tipo === 'Bearer' ? headerToken : null);
+
+    if (!token) {
         return res.status(401).json({ success: false, error: 'No autorizado' });
     }
 

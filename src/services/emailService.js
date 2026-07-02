@@ -101,8 +101,14 @@ async function enviarCorreoNotificacionVoto({ nombre, correo, equipoLocal, equip
  * para el siguiente partido de la Selección Colombia.
  * @param {{ destinatario: string, nombre: string, equipoLocal: string, equipoVisitante: string, linkCompra: string }} datos
  */
-async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoVisitante, linkCompra }) {
+async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoVisitante, linkCompra, unsubscribeUrl }) {
     const transporter = crearTransporter();
+
+    const unsub = unsubscribeUrl
+        ? `<p style="font-size: 11px; color: #a1a1aa; text-align: center; margin-top: 24px;">
+               ¿No deseas recibir más correos? <a href="${unsubscribeUrl}" style="color: #a1a1aa;">Cancelar suscripción</a>
+           </p>`
+        : '';
 
     const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
@@ -115,6 +121,7 @@ async function enviarCorreoRecompra({ destinatario, nombre, equipoLocal, equipoV
             </a>
         </p>
         <p style="font-size: 12px; color: #71717a;">Si el botón no funciona, copia y pega este link en tu navegador: ${linkCompra}</p>
+        ${unsub}
     </div>`;
 
     await transporter.sendMail({

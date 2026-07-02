@@ -20,4 +20,25 @@ function puntajeTendencia(fase) {
     return PUNTAJES_FASE[fase]?.tendencia ?? PUNTAJES_FASE.grupos.tendencia;
 }
 
-module.exports = { PUNTAJES_FASE, puntajeExacto, puntajeTendencia };
+// Genera el fragmento SQL `CASE ... END` para calcular puntos a partir de los
+// valores definidos en PUNTAJES_FASE — única fuente de verdad para queries SQL.
+// Parámetros: alias de columna fase, condición SQL de exacto, condición de tendencia.
+function casePuntajeSQL(faseCol, exactoCond, tendenciaCond) {
+    const exactoCases = Object.entries(PUNTAJES_FASE)
+        .map(([f, pts]) => `WHEN '${f}' THEN ${pts.exacto}`)
+        .join(' ');
+    const tendenciaCases = Object.entries(PUNTAJES_FASE)
+        .map(([f, pts]) => `WHEN '${f}' THEN ${pts.tendencia}`)
+        .join(' ');
+    const defE = PUNTAJES_FASE.grupos.exacto;
+    const defT = PUNTAJES_FASE.grupos.tendencia;
+    return `CASE
+                WHEN ${exactoCond}
+                    THEN CASE ${faseCol} ${exactoCases} ELSE ${defE} END
+                WHEN ${tendenciaCond}
+                    THEN CASE ${faseCol} ${tendenciaCases} ELSE ${defT} END
+                ELSE 0
+            END`;
+}
+
+module.exports = { PUNTAJES_FASE, puntajeExacto, puntajeTendencia, casePuntajeSQL };

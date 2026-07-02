@@ -4,6 +4,7 @@ const Sentry = require('./instrument');
 
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 
@@ -69,7 +70,9 @@ app.use(cors({
         if (origenesPermitidos.length === 0 || origenesPermitidos.includes(origin)) return callback(null, true);
         callback(new Error('Not allowed by CORS'));
     },
+    credentials: true,
 }));
+app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', async (req, res) => {
@@ -772,6 +775,12 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS pwa_instalada BOOLEAN NOT NULL DEFAULT FALSE`);
     } catch (err) {
         console.error('Error aplicando migración de dispositivo/pwa_instalada:', err.message);
+    }
+
+    try {
+        await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS opt_out_email BOOLEAN NOT NULL DEFAULT FALSE`);
+    } catch (err) {
+        console.error('Error aplicando migración de opt_out_email:', err.message);
     }
 
     iniciarMonitorMarcadores();

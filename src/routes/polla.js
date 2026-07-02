@@ -1,11 +1,12 @@
 const express = require('express');
+const crypto = require('crypto');
 const multer = require('multer');
 const pool = require('../db');
 const { enviarCorreoNotificacionVoto } = require('../services/emailService');
 const { generarImagenBono } = require('../services/bonoService');
 const { obtenerSaldoUsuario } = require('../services/walletService');
 const { CUPO_VALOR } = require('../config/planes');
-const { puntajeExacto, puntajeTendencia } = require('../config/puntajesFase');
+const { puntajeExacto, puntajeTendencia, casePuntajeSQL } = require('../config/puntajesFase');
 const { getOrSet, invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
@@ -338,7 +339,9 @@ router.get('/verificar-acceso', async (req, res) => {
                 [contacto]
             );
             if (pRows.length > 0) {
-                return res.json({ acceso: false, pendiente_verificacion: true, token_acceso: pRows[0].token_acceso });
+                // No exponemos token_acceso en transacciones PENDIENTE — cualquiera que
+                // conozca el celular/correo de otro usuario podría obtenerlo sin auth.
+                return res.json({ acceso: false, pendiente_verificacion: true });
             }
             return res.json({ acceso: false });
         }
@@ -350,7 +353,7 @@ router.get('/verificar-acceso', async (req, res) => {
             acceso: true,
             token_acceso: transaccion.token_acceso,
             nombre: transaccion.nombre,
-            correo: transaccion.correo,
+            // correo omitido: el usuario ya conoce su propio correo y no es necesario exponerlo
             intentos_disponibles: intentosDisponibles,
         });
     } catch (err) {
@@ -636,37 +639,11 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                     AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
                 )::int AS parciales,
                 COALESCE(SUM(
-                    CASE
-                        WHEN p.estado = 'cerrado'
-                             AND pr.goles_local = p.goles_local
-                             AND pr.goles_visitante = p.goles_visitante
-                        THEN CASE p.fase
-                            WHEN 'grupos'        THEN 100
-                            WHEN 'dieciseisavos' THEN 200
-                            WHEN 'octavos'       THEN 200
-                            WHEN 'cuartos'       THEN 600
-                            WHEN 'semifinal'     THEN 600
-                            WHEN 'final'         THEN 1000
-                            ELSE 100
-                        END
-                        WHEN p.estado = 'cerrado'
-                             AND (
-                                 (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
-                                 (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR
-                                 (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
-                             )
-                             AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
-                        THEN CASE p.fase
-                            WHEN 'grupos'        THEN 50
-                            WHEN 'dieciseisavos' THEN 100
-                            WHEN 'octavos'       THEN 100
-                            WHEN 'cuartos'       THEN 300
-                            WHEN 'semifinal'     THEN 300
-                            WHEN 'final'         THEN 500
-                            ELSE 50
-                        END
-                        ELSE 0
-                    END
+                    ${casePuntajeSQL(
+                        'p.fase',
+                        "p.estado = 'cerrado' AND pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante",
+                        "p.estado = 'cerrado' AND ((pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)) AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)"
+                    )}
                 ), 0)::int AS puntos_pronosticos
              FROM pronosticos pr
              JOIN partidos p ON p.id = pr.partido_id
@@ -692,27 +669,11 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                  SELECT pts FROM (
                      SELECT pr2.usuario_id,
                          COALESCE(SUM(
-                             CASE
-                                 WHEN p2.estado = 'cerrado'
-                                      AND pr2.goles_local = p2.goles_local
-                                      AND pr2.goles_visitante = p2.goles_visitante
-                                 THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
-                                     WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100
-                                 END
-                                 WHEN p2.estado = 'cerrado'
-                                      AND (
-                                          (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                                          (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                                          (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                                      )
-                                      AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                                 THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
-                                     WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50
-                                 END
-                                 ELSE 0
-                             END
+                             ${casePuntajeSQL(
+                                 'p2.fase',
+                                 "p2.estado = 'cerrado' AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante",
+                                 "p2.estado = 'cerrado' AND ((pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)) AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)"
+                             )}
                          ), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
                      FROM pronosticos pr2
                      JOIN partidos p2 ON p2.id = pr2.partido_id
@@ -736,27 +697,11 @@ router.get('/resumen-usuario', usuarioAuth, async (req, res) => {
                  SELECT pts FROM (
                      SELECT pr2.usuario_id,
                          COALESCE(SUM(
-                             CASE
-                                 WHEN p2.estado = 'cerrado'
-                                      AND pr2.goles_local = p2.goles_local
-                                      AND pr2.goles_visitante = p2.goles_visitante
-                                 THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
-                                     WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100
-                                 END
-                                 WHEN p2.estado = 'cerrado'
-                                      AND (
-                                          (pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR
-                                          (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR
-                                          (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)
-                                      )
-                                      AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)
-                                 THEN CASE p2.fase
-                                     WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
-                                     WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50
-                                 END
-                                 ELSE 0
-                             END
+                             ${casePuntajeSQL(
+                                 'p2.fase',
+                                 "p2.estado = 'cerrado' AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante",
+                                 "p2.estado = 'cerrado' AND ((pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)) AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)"
+                             )}
                          ), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
                      FROM pronosticos pr2
                      JOIN partidos p2 ON p2.id = pr2.partido_id
@@ -820,36 +765,12 @@ router.get('/mis-pronosticos', usuarioAuth, async (req, res) => {
                 p.fase,
                 p.fecha_hora_inicio,
                 CASE
-                    WHEN p.estado = 'cerrado'
-                         AND pr.goles_local = p.goles_local
-                         AND pr.goles_visitante = p.goles_visitante
-                        THEN CASE p.fase
-                            WHEN 'grupos'        THEN 100
-                            WHEN 'dieciseisavos' THEN 200
-                            WHEN 'octavos'       THEN 200
-                            WHEN 'cuartos'       THEN 600
-                            WHEN 'semifinal'     THEN 600
-                            WHEN 'final'         THEN 1000
-                            ELSE 100
-                        END
-                    WHEN p.estado = 'cerrado'
-                         AND (
-                             (pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR
-                             (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR
-                             (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)
-                         )
-                         AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)
-                        THEN CASE p.fase
-                            WHEN 'grupos'        THEN 50
-                            WHEN 'dieciseisavos' THEN 100
-                            WHEN 'octavos'       THEN 100
-                            WHEN 'cuartos'       THEN 300
-                            WHEN 'semifinal'     THEN 300
-                            WHEN 'final'         THEN 500
-                            ELSE 50
-                        END
-                    WHEN p.estado = 'cerrado' THEN 0
-                    ELSE NULL
+                    WHEN p.estado != 'cerrado' THEN NULL
+                    ELSE ${casePuntajeSQL(
+                        'p.fase',
+                        "p.goles_local = pr.goles_local AND p.goles_visitante = pr.goles_visitante",
+                        "((pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)) AND NOT (p.goles_local = pr.goles_local AND p.goles_visitante = pr.goles_visitante)"
+                    )}
                 END AS puntos_partido
              FROM pronosticos pr
              JOIN partidos p ON p.id = pr.partido_id
@@ -978,19 +899,34 @@ router.post('/votar-flash', votarLimiter, async (req, res) => {
             return res.status(403).json({ success: false, error: 'La ventana de la promoción relámpago ya cerró para este partido' });
         }
 
-        const { rows: existeRows } = await pool.query(
-            'SELECT id FROM pronosticos WHERE usuario_id = $1 AND partido_id = $2',
-            [usuario_id, partido_id]
-        );
-        if (existeRows.length > 0) {
-            return res.status(400).json({ success: false, error: 'Ya registraste tu pronóstico para este partido' });
-        }
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
 
-        await pool.query(
-            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, es_flash)
-             VALUES (NULL, $1, $2, $3, $4, TRUE)`,
-            [usuario_id, partido_id, local, visitante]
-        );
+            // SELECT FOR UPDATE garantiza que dos peticiones simultáneas del mismo
+            // usuario no pasen ambas el check y produzcan un pronóstico duplicado.
+            const { rows: existeRows } = await client.query(
+                'SELECT id FROM pronosticos WHERE usuario_id = $1 AND partido_id = $2 FOR UPDATE',
+                [usuario_id, partido_id]
+            );
+            if (existeRows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ success: false, error: 'Ya registraste tu pronóstico para este partido' });
+            }
+
+            await client.query(
+                `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, es_flash)
+                 VALUES (NULL, $1, $2, $3, $4, TRUE)`,
+                [usuario_id, partido_id, local, visitante]
+            );
+
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
 
         invalidate(`ranking:${partido_id}`);
         invalidate(`resumen:${partido_id}`);
@@ -1010,30 +946,11 @@ router.get('/resultados-finales', async (req, res) => {
         const { rows: top3 } = await pool.query(`
             SELECT u.id, u.nombre,
                    COALESCE(SUM(
-                       CASE
-                           WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
-                                AND pa.goles_local IS NOT NULL
-                           THEN CASE pa.fase
-                               WHEN 'grupos'        THEN 100
-                               WHEN 'dieciseisavos' THEN 200
-                               WHEN 'octavos'       THEN 200
-                               WHEN 'cuartos'       THEN 600
-                               WHEN 'semifinal'     THEN 600
-                               WHEN 'final'         THEN 1000
-                               ELSE 100 END
-                           WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
-                                AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
-                                AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                           THEN CASE pa.fase
-                               WHEN 'grupos'        THEN 50
-                               WHEN 'dieciseisavos' THEN 100
-                               WHEN 'octavos'       THEN 100
-                               WHEN 'cuartos'       THEN 300
-                               WHEN 'semifinal'     THEN 300
-                               WHEN 'final'         THEN 500
-                               ELSE 50 END
-                           ELSE 0
-                       END
+                       ${casePuntajeSQL(
+                           'pa.fase',
+                           'pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL',
+                           'pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante) AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)'
+                       )}
                    ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
                    COUNT(
                        CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
@@ -1329,6 +1246,41 @@ router.get('/actividad-reciente', async (req, res) => {
     } catch (err) {
         console.error('GET /polla/actividad-reciente:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/polla/unsubscribe?id=:id&token=:hmac
+// Cancela el envío de correos comerciales a este usuario (Ley 1581 Colombia).
+// El token es un HMAC-SHA256 del id del usuario con la clave JWT, así que
+// el link es de un solo paso y no requiere autenticación.
+router.get('/unsubscribe', async (req, res) => {
+    const { id, token } = req.query;
+
+    if (!id || !token) {
+        return res.status(400).send('Enlace inválido.');
+    }
+
+    const esperado = crypto
+        .createHmac('sha256', process.env.JWT_SECRET || 'polla_secret')
+        .update(String(id))
+        .digest('hex')
+        .slice(0, 32);
+
+    if (token !== esperado) {
+        return res.status(400).send('Enlace inválido o expirado.');
+    }
+
+    try {
+        await pool.query('UPDATE usuarios SET opt_out_email = TRUE WHERE id = $1', [id]);
+        return res.send(`
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px;color:#18181b;">
+                <h2 style="color:#f59e0b;">Cancelación registrada</h2>
+                <p>Ya no recibirás correos comerciales de La Retoucherie de Manuela.</p>
+            </body></html>
+        `);
+    } catch (err) {
+        console.error('Error en /unsubscribe:', err.message);
+        return res.status(500).send('Error interno. Por favor contáctanos.');
     }
 });
 

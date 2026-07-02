@@ -14,6 +14,16 @@ const { registrarEvento } = require('../services/auditoriaService');
 
 const router = express.Router();
 
+function setCookieSesion(res, token) {
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('polla_token', token, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+}
+
 const RESET_CODE_VIGENCIA_MIN = 10;
 const RESET_INTENTOS_MAX = 5;
 
@@ -118,7 +128,9 @@ router.post('/registro', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
+        const tokenUsuario = generarTokenUsuario(usuario);
+        setCookieSesion(res, tokenUsuario);
+        return res.json({ success: true, usuario, token: tokenUsuario });
     } catch (err) {
         console.error('Error en /auth/registro:', err);
         if (err.code === '23505') {
@@ -164,7 +176,9 @@ router.post('/login', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
+        const tokenUsuario = generarTokenUsuario(usuario);
+        setCookieSesion(res, tokenUsuario);
+        return res.json({ success: true, usuario, token: tokenUsuario });
     } catch (err) {
         console.error('Error en /auth/login:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
@@ -231,7 +245,9 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
                 ip: obtenerIp(req),
                 userAgent: req.headers['user-agent'],
             });
-            return res.json({ success: true, usuario: usuarioRows[0], token: generarTokenUsuario(usuarioRows[0]) });
+            const tokenUsuario = generarTokenUsuario(usuarioRows[0]);
+            setCookieSesion(res, tokenUsuario);
+            return res.json({ success: true, usuario: usuarioRows[0], token: tokenUsuario });
         }
 
         const registroToken = crypto.randomUUID();
@@ -298,7 +314,9 @@ router.post('/telefono/completar', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, usuario: nuevoUsuario[0], token: generarTokenUsuario(nuevoUsuario[0]) });
+        const tokenUsuario = generarTokenUsuario(nuevoUsuario[0]);
+        setCookieSesion(res, tokenUsuario);
+        return res.json({ success: true, usuario: nuevoUsuario[0], token: tokenUsuario });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error en /auth/telefono/completar:', err.message);
@@ -475,7 +493,9 @@ router.post('/google', async (req, res) => {
                 ip: obtenerIp(req),
                 userAgent: req.headers['user-agent'],
             });
-            return res.json({ success: true, usuario: porGoogleId[0], token: generarTokenUsuario(porGoogleId[0]) });
+            const tokenUsuario = generarTokenUsuario(porGoogleId[0]);
+            setCookieSesion(res, tokenUsuario);
+            return res.json({ success: true, usuario: porGoogleId[0], token: tokenUsuario });
         }
 
         // Si ya existe una cuenta con ese correo verificado, se vincula a la cuenta de Google
@@ -494,7 +514,9 @@ router.post('/google', async (req, res) => {
                     ip: obtenerIp(req),
                     userAgent: req.headers['user-agent'],
                 });
-                return res.json({ success: true, usuario: porCorreo[0], token: generarTokenUsuario(porCorreo[0]) });
+                const tokenUsuario = generarTokenUsuario(porCorreo[0]);
+                setCookieSesion(res, tokenUsuario);
+                return res.json({ success: true, usuario: porCorreo[0], token: tokenUsuario });
             }
         }
 
@@ -571,7 +593,9 @@ router.post('/google/completar', async (req, res) => {
             userAgent: req.headers['user-agent'],
         });
 
-        return res.json({ success: true, usuario, token: generarTokenUsuario(usuario) });
+        const tokenUsuario = generarTokenUsuario(usuario);
+        setCookieSesion(res, tokenUsuario);
+        return res.json({ success: true, usuario, token: tokenUsuario });
     } catch (err) {
         console.error('Error en /auth/google/completar:', err);
         if (err.code === '23505') {
@@ -579,6 +603,17 @@ router.post('/google/completar', async (req, res) => {
         }
         return res.status(401).json({ success: false, error: 'Token de Google inválido' });
     }
+});
+
+// POST /api/auth/logout - elimina la cookie de sesión del usuario
+router.post('/logout', (req, res) => {
+    const isProd = process.env.NODE_ENV === 'production';
+    res.clearCookie('polla_token', {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
+    });
+    res.json({ success: true });
 });
 
 module.exports = router;

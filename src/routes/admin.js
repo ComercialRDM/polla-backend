@@ -17,8 +17,20 @@ const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
 const { enviarCorreosResultadoPartido } = require('../services/notificacionesService');
 const { normalizarCelular } = require('../utils/celular');
+const { PUNTAJES_FASE, casePuntajeSQL } = require('../config/puntajesFase');
 
 const router = express.Router();
+
+// Fisher-Yates shuffle criptográficamente seguro (crypto.randomBytes en lugar de Math.random)
+// Usado en sorteos de premios donde se distribuye dinero real.
+function shuffleSeguro(arr) {
+    const result = [...arr];
+    for (let i = result.length - 1; i > 0; i--) {
+        const j = crypto.randomBytes(4).readUInt32BE(0) % (i + 1);
+        [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+}
 
 // POST /api/admin/login - autenticación con usuario + contraseña [+ TOTP si 2FA activo]
 router.post('/login', async (req, res) => {
@@ -416,7 +428,7 @@ router.patch('/partidos/:id', async (req, res) => {
                 // partes iguales entre todos (sin sorteo).
                 const sorteoRealizado = exactos.length > 10;
                 const ganadoresElegidos = sorteoRealizado
-                    ? [...exactos].sort(() => Math.random() - 0.5).slice(0, 10)
+                    ? shuffleSeguro(exactos).slice(0, 10)
                     : exactos;
                 const montoPorGanador = sorteoRealizado ? 100000 : Math.floor(1000000 / exactos.length);
                 const nombrePartido = `${partido.equipo_local} ${partido.goles_local} - ${partido.goles_visitante} ${partido.equipo_visitante}`;
@@ -562,23 +574,37 @@ router.post('/notificar-recompra', async (req, res) => {
         const { equipo_local, equipo_visitante } = destinoRows[0];
 
         const { rows: usuarios } = await pool.query(
-            `SELECT DISTINCT u.nombre, u.correo
+            `SELECT DISTINCT u.id, u.nombre, u.correo
              FROM usuarios u
              JOIN transacciones t ON t.usuario_id = u.id
-             WHERE t.partido_id = $1 AND t.estado_pago = 'APROBADO'`,
+             WHERE t.partido_id = $1 AND t.estado_pago = 'APROBADO'
+               AND (u.opt_out_email IS NULL OR u.opt_out_email = FALSE)`,
             [partido_id_origen]
         );
 
         const linkCompra = `${process.env.FRONTEND_URL}/comprar`;
         let enviados = 0;
-        for (const usuario of usuarios) {
+        const BATCH_SIZE = 200;
+        const DELAY_MS = 100;
+        for (let i = 0; i < usuarios.length; i++) {
+            if (i > 0 && i % BATCH_SIZE === 0) {
+                await new Promise((r) => setTimeout(r, DELAY_MS));
+            }
+            const usuario = usuarios[i];
             try {
+                const unsubToken = crypto
+                    .createHmac('sha256', process.env.JWT_SECRET || 'polla_secret')
+                    .update(String(usuario.id))
+                    .digest('hex')
+                    .slice(0, 32);
+                const backendUrl = `${req.protocol}://${req.get('host')}`;
                 await enviarCorreoRecompra({
                     destinatario: usuario.correo,
                     nombre: usuario.nombre,
                     equipoLocal: equipo_local,
                     equipoVisitante: equipo_visitante,
                     linkCompra,
+                    unsubscribeUrl: `${backendUrl}/api/polla/unsubscribe?id=${usuario.id}&token=${unsubToken}`,
                 });
                 enviados += 1;
             } catch (err) {
@@ -1345,28 +1371,21 @@ router.get('/ranking-final', async (req, res) => {
         const { rows } = await pool.query(
             `SELECT u.id, u.nombre, u.celular, u.correo,
                     COALESCE(SUM(
-                        CASE
-                            WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL
-                            THEN CASE pa.fase
-                                WHEN 'grupos' THEN 100 WHEN 'dieciseisavos' THEN 200 WHEN 'octavos' THEN 200
-                                WHEN 'cuartos' THEN 600 WHEN 'semifinal' THEN 600 WHEN 'final' THEN 1000 ELSE 100 END
-                            WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
-                                 AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
-                                 AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                            THEN CASE pa.fase
-                                WHEN 'grupos' THEN 50 WHEN 'dieciseisavos' THEN 100 WHEN 'octavos' THEN 100
-                                WHEN 'cuartos' THEN 300 WHEN 'semifinal' THEN 300 WHEN 'final' THEN 500 ELSE 50 END
-                            ELSE 0
-                        END
+                        ${casePuntajeSQL(
+                            'pa.fase',
+                            'pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL',
+                            'pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante) AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)'
+                        )}
                     ), 0) + COALESCE(u.puntos_bonus, 0) AS puntos_total,
                     COUNT(CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1 END) AS exactos_total,
                     COALESCE(SUM(
                         CASE
-                            WHEN pa.fase = 'final' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL THEN 1000
+                            WHEN pa.fase = 'final' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante AND pa.goles_local IS NOT NULL
+                                THEN ${PUNTAJES_FASE.final.exacto}
                             WHEN pa.fase = 'final' AND pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
                                  AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
                                  AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                            THEN 500
+                                THEN ${PUNTAJES_FASE.final.tendencia}
                             ELSE 0
                         END
                     ), 0) AS puntos_final,
@@ -1429,7 +1448,7 @@ router.get('/ranking-final', async (req, res) => {
             const premioTotal = premiosDelBloque.reduce((a, b) => a + b, 0);
             const sorteoRealizado = bloque.usuarios.length > 10;
             const ganadores = sorteoRealizado
-                ? [...bloque.usuarios].sort(() => Math.random() - 0.5).slice(0, 10)
+                ? shuffleSeguro(bloque.usuarios).slice(0, 10)
                 : bloque.usuarios;
             const montoPorGanador = Math.floor(premioTotal / ganadores.length);
 

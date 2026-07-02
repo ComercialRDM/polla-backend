@@ -7,6 +7,7 @@ const { resolverAtribucion } = require('../services/referidosService');
 const { extraerAtribucion, clasificarCanal } = require('../utils/atribucion');
 const { obtenerIp } = require('../utils/request');
 const { registrarEvento } = require('../services/auditoriaService');
+const { alertaInmediata } = require('../services/alertaService');
 const { obtenerBancosPSE, crearTransaccionPSE, crearTransaccionBancolombiaTransfer } = require('../services/wompiApiService');
 const { generarTokenUsuario } = require('../utils/userTokens');
 
@@ -78,6 +79,9 @@ async function resolverUsuarioComprador(client, { nombre, correo, celular }) {
                 'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, NULL, $2) RETURNING *',
                 [nombre, celular]
             );
+            alertaInmediata('USUARIO_HUERFANO', {
+                descripcion: `celular ${celular} - correo duplicado: ${correo}`,
+            });
             return rows[0];
         }
         throw err;
@@ -97,9 +101,12 @@ const upload = multer({
 
 // POST /api/transacciones/crear-link
 router.post('/crear-link', async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token, acepta_terminos } = req.body;
     const referidoPorToken = tokenReferidoValido(ref);
 
+    if (!acepta_terminos) {
+        return res.status(400).json({ success: false, error: 'Debes aceptar los Términos y Condiciones para continuar' });
+    }
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
     }
@@ -234,10 +241,13 @@ router.post('/crear-link', async (req, res) => {
 const METODOS_MANUALES_VALIDOS = new Set(['Transferencia', 'BREB']);
 
 router.post('/crear-transferencia', upload.single('comprobante'), async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token, acepta_terminos } = req.body;
     const metodo = METODOS_MANUALES_VALIDOS.has(req.body.metodo) ? req.body.metodo : 'Transferencia';
     const referidoPorToken = tokenReferidoValido(ref);
 
+    if (!acepta_terminos) {
+        return res.status(400).json({ success: false, error: 'Debes aceptar los Términos y Condiciones para continuar' });
+    }
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
     }
@@ -276,7 +286,7 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
             `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, comprobante_imagen, comprobante_mime, referido_por_token, influencer_id, clic_id,
                                          utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer, landing_page, first_touch_at, attribution_group)
              VALUES ($1, $2, $3, $4, $5, $6, 'PENDIENTE', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-             RETURNING id`,
+             RETURNING id, token_acceso`,
             [usuario.id, partido_id, metodo, Number(valor), plan.saldoBono, plan.intentos, req.file.buffer, req.file.mimetype, referidoPorToken, atribucion?.influencerId || null, atribucion?.clicId || null,
                 atribucionMkt.utmSource, atribucionMkt.utmMedium, atribucionMkt.utmCampaign, atribucionMkt.utmContent, atribucionMkt.utmTerm,
                 atribucionMkt.referrer, atribucionMkt.landingPage, atribucionMkt.firstTouchAt, atribucionMkt.attributionGroup]
@@ -298,7 +308,8 @@ router.post('/crear-transferencia', upload.single('comprobante'), async (req, re
             success: true,
             ...usuarioParaSesion(usuario),
             transaccion_id: transaccionRows[0].id,
-            mensaje: 'Tu comprobante fue recibido. Apenas el equipo de La Retoucherie confirme el pago, recibirás tu bono por correo.',
+            token_acceso: transaccionRows[0].token_acceso,
+            mensaje: 'Comprobante recibido. Ya puedes explorar tu cuenta — te notificamos por correo en cuanto confirmemos el pago.',
         });
     } catch (err) {
         await client.query('ROLLBACK');
@@ -334,9 +345,12 @@ router.get('/bancos-pse', async (req, res) => {
 // real en Wompi vía API directa (no Widget), devuelve la URL a la que redirigir
 // al cliente para que termine el pago en su banco.
 router.post('/crear-pse', async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref, aff_token, tipo_documento, documento, financial_institution_code } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token, tipo_documento, documento, financial_institution_code, acepta_terminos } = req.body;
     const referidoPorToken = tokenReferidoValido(ref);
 
+    if (!acepta_terminos) {
+        return res.status(400).json({ success: false, error: 'Debes aceptar los Términos y Condiciones para continuar' });
+    }
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
     }
@@ -421,9 +435,12 @@ router.post('/crear-pse', async (req, res) => {
 // POST /api/transacciones/crear-bancolombia - igual que crear-pse pero con Botón
 // Bancolombia (no exige documento según la documentación de Wompi).
 router.post('/crear-bancolombia', async (req, res) => {
-    const { nombre, correo, celular, partido_id, valor, ref, aff_token } = req.body;
+    const { nombre, correo, celular, partido_id, valor, ref, aff_token, acepta_terminos } = req.body;
     const referidoPorToken = tokenReferidoValido(ref);
 
+    if (!acepta_terminos) {
+        return res.status(400).json({ success: false, error: 'Debes aceptar los Términos y Condiciones para continuar' });
+    }
     if (!nombre || !correo || !celular || !partido_id || !valor) {
         return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
     }
