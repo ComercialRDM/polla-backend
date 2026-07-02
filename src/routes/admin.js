@@ -495,23 +495,42 @@ router.patch('/partidos/:id', async (req, res) => {
     }
 });
 
-// DELETE /api/admin/partidos/:id
+// DELETE /api/admin/partidos/:id  — borra el partido y TODOS sus registros dependientes
 router.delete('/partidos/:id', async (req, res) => {
     const { id } = req.params;
-
+    const client = await pool.connect();
     try {
-        const { rows } = await pool.query('DELETE FROM partidos WHERE id = $1 RETURNING id', [id]);
-        if (rows.length === 0) {
+        await client.query('BEGIN');
+
+        const { rows: check } = await client.query(
+            'SELECT id, equipo_local, equipo_visitante FROM partidos WHERE id = $1', [id]
+        );
+        if (check.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ success: false, error: 'Partido no encontrado' });
         }
+
+        await client.query('DELETE FROM bonos_colombia   WHERE partido_id = $1', [id]);
+        await client.query('DELETE FROM recompra_enviada WHERE partido_id = $1', [id]);
+        await client.query('DELETE FROM compartidas      WHERE partido_id = $1', [id]);
+        await client.query('DELETE FROM pronosticos      WHERE partido_id = $1', [id]);
+        await client.query(
+            'DELETE FROM redenciones WHERE transaccion_id IN (SELECT id FROM transacciones WHERE partido_id = $1)', [id]
+        );
+        await client.query('DELETE FROM transacciones    WHERE partido_id = $1', [id]);
+        await client.query('DELETE FROM partidos         WHERE id = $1',         [id]);
+
+        await client.query('COMMIT');
         invalidate('partidos:lista');
-        return res.json({ success: true });
+        const p = check[0];
+        console.log(`Partido eliminado (cascade): ${p.equipo_local} vs ${p.equipo_visitante} (id=${id})`);
+        return res.json({ success: true, eliminado: `${p.equipo_local} vs ${p.equipo_visitante}` });
     } catch (err) {
-        if (err.code === '23503') {
-            return res.status(409).json({ success: false, error: 'No se puede eliminar: el partido tiene transacciones o pronósticos asociados' });
-        }
-        console.error('Error en /admin/partidos delete:', err);
+        await client.query('ROLLBACK');
+        console.error('Error eliminando partido:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
     }
 });
 
