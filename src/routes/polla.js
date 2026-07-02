@@ -194,6 +194,75 @@ router.get('/info', async (req, res) => {
                 : null,
         }));
 
+        // Estadísticas de puntos y posición en ranking para el dashboard
+        const { rows: puntosInfoRows } = await pool.query(
+            `SELECT
+                COUNT(*) FILTER (
+                    WHERE p.estado = 'cerrado'
+                    AND pr.goles_local = p.goles_local
+                    AND pr.goles_visitante = p.goles_visitante
+                )::int AS exactos,
+                COALESCE(SUM(
+                    ${casePuntajeSQL(
+                        'p.fase',
+                        "p.estado = 'cerrado' AND pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante",
+                        "p.estado = 'cerrado' AND ((pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)) AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)"
+                    )}
+                ), 0)::int AS puntos_pronosticos
+             FROM pronosticos pr
+             JOIN partidos p ON p.id = pr.partido_id
+             WHERE pr.usuario_id = $1`,
+            [usuario_id]
+        );
+        const { rows: bonusInfoRows } = await pool.query(
+            'SELECT puntos_bonus FROM usuarios WHERE id = $1', [usuario_id]
+        );
+        const puntos_bonus_info = bonusInfoRows[0]?.puntos_bonus || 0;
+        const puntos_info = puntosInfoRows[0].puntos_pronosticos + puntos_bonus_info;
+        const exactos_info = puntosInfoRows[0].exactos;
+
+        const { rows: posInfoRows } = await pool.query(
+            `SELECT COUNT(*)::int + 1 AS posicion
+             FROM (
+                 SELECT pr2.usuario_id,
+                        COALESCE(SUM(${casePuntajeSQL(
+                            'p2.fase',
+                            "p2.estado = 'cerrado' AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante",
+                            "p2.estado = 'cerrado' AND ((pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)) AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)"
+                        )}), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
+                 FROM pronosticos pr2
+                 JOIN partidos p2 ON p2.id = pr2.partido_id
+                 JOIN usuarios u2 ON u2.id = pr2.usuario_id
+                 GROUP BY pr2.usuario_id, u2.puntos_bonus
+             ) ranking WHERE pts > $1`,
+            [puntos_info]
+        );
+
+        const { rows: totalPartInfoRows } = await pool.query(
+            `SELECT COUNT(DISTINCT usuario_id)::int AS total FROM pronosticos`
+        );
+        const total_participantes_info = Math.max(totalPartInfoRows[0]?.total || 1, 1);
+
+        const { rows: sigInfoRows } = await pool.query(
+            `SELECT MIN(pts) AS puntos_siguiente
+             FROM (
+                 SELECT pr2.usuario_id,
+                        COALESCE(SUM(${casePuntajeSQL(
+                            'p2.fase',
+                            "p2.estado = 'cerrado' AND pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante",
+                            "p2.estado = 'cerrado' AND ((pr2.goles_local > pr2.goles_visitante AND p2.goles_local > p2.goles_visitante) OR (pr2.goles_local < pr2.goles_visitante AND p2.goles_local < p2.goles_visitante) OR (pr2.goles_local = pr2.goles_visitante AND p2.goles_local = p2.goles_visitante)) AND NOT (pr2.goles_local = p2.goles_local AND pr2.goles_visitante = p2.goles_visitante)"
+                        )}), 0) + COALESCE(u2.puntos_bonus, 0) AS pts
+                 FROM pronosticos pr2
+                 JOIN partidos p2 ON p2.id = pr2.partido_id
+                 JOIN usuarios u2 ON u2.id = pr2.usuario_id
+                 WHERE pr2.usuario_id != $1
+                 GROUP BY pr2.usuario_id, u2.puntos_bonus
+             ) ranking WHERE pts > $2`,
+            [usuario_id, puntos_info]
+        );
+        const pts_siguiente = sigInfoRows[0]?.puntos_siguiente != null ? parseInt(sigInfoRows[0].puntos_siguiente) : null;
+        const puntos_para_superar_info = pts_siguiente != null ? pts_siguiente - puntos_info : null;
+
         return res.json({
             acceso: true,
             nombre,
@@ -218,6 +287,11 @@ router.get('/info', async (req, res) => {
             partidos,
             fecha_nacimiento: fecha_nacimiento ? fecha_nacimiento.toISOString().split('T')[0] : null,
             sexo: sexo || null,
+            puntos: puntos_info,
+            exactos: exactos_info,
+            posicion: posInfoRows[0].posicion,
+            total_participantes: total_participantes_info,
+            puntos_para_superar: puntos_para_superar_info,
         });
     } catch (err) {
         console.error('Error en /polla/info:', err);
