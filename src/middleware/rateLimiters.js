@@ -126,11 +126,11 @@ const clicLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.' },
 });
 
-// Limita el landing de Colombia a 2 pronósticos por IP cada 24 horas para
+// Limita el landing de Colombia a 5 pronósticos por IP cada 24 horas para
 // frenar números inventados y envíos masivos desde el mismo dispositivo.
 const landingLimiter = rateLimit({
     windowMs: 24 * 60 * 60 * 1000,
-    limit: 2,
+    limit: 5,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => obtenerIp(req),
