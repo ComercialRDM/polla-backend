@@ -77,6 +77,7 @@ const otpLimiter = rateLimit({
     limit: 5,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { ip: false },
     message: { success: false, error: 'Demasiados códigos solicitados. Espera una hora e inténtalo de nuevo.' },
     keyGenerator: (req) => (req.body?.celular ? `otp:${req.body.celular}` : req.ip),
 });
@@ -102,6 +103,7 @@ const resetPasswordLimiter = rateLimit({
     limit: 5,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { ip: false },
     message: { success: false, error: 'Demasiadas solicitudes de restablecimiento. Espera una hora e inténtalo de nuevo.' },
     keyGenerator: (req) => (req.body?.celular ? `reset:${req.body.celular}` : req.ip),
 });
