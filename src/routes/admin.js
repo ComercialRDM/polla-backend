@@ -1033,6 +1033,8 @@ router.post('/preseleccionados', async (req, res) => {
         const nombre = String(nombre_completo).trim();
         const celularNorm = celular ? String(celular).replace(/[^0-9+]/g, '').trim() : null;
         const emailNorm = email ? String(email).trim().toLowerCase() : null;
+        // celular es NOT NULL en usuarios; si no tienen número usamos placeholder interno
+        const celularFinal = celularNorm || `INF_${nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 20)}_${Date.now()}`;
 
         // Buscar o crear usuario
         let usuario;
@@ -1040,10 +1042,14 @@ router.post('/preseleccionados', async (req, res) => {
             const { rows: ex } = await client.query('SELECT * FROM usuarios WHERE celular = $1', [celularNorm]);
             usuario = ex[0];
         }
+        if (!usuario && emailNorm) {
+            const { rows: ex } = await client.query('SELECT * FROM usuarios WHERE correo = $1', [emailNorm]);
+            usuario = ex[0];
+        }
         if (!usuario) {
             const { rows } = await client.query(
                 'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
-                [nombre, emailNorm, celularNorm]
+                [nombre, emailNorm, celularFinal]
             );
             usuario = rows[0];
         }

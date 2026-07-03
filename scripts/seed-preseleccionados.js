@@ -114,6 +114,11 @@ async function main() {
                 }
 
                 // Buscar o crear usuario
+                // celular es NOT NULL en usuarios; si no tienen número usamos
+                // un placeholder interno único (no se usa para auth ni SMS).
+                const celularFinal = inf.celular
+                    || `INF_${inf.nombre_completo.replace(/\s+/g, '_').toUpperCase().slice(0, 20)}_${Date.now()}`;
+
                 let usuario;
                 if (inf.email) {
                     const { rows: ex } = await client.query(
@@ -125,7 +130,7 @@ async function main() {
                 if (!usuario) {
                     const { rows } = await client.query(
                         'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
-                        [inf.nombre_completo, inf.email, inf.celular]
+                        [inf.nombre_completo, inf.email, celularFinal]
                     );
                     usuario = rows[0];
                     console.log(`   ✅ Usuario creado id=${usuario.id}`);
