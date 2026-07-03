@@ -1004,6 +1004,151 @@ router.patch('/comisiones/:id', async (req, res) => {
     }
 });
 
+// ── CRM Influencers Pre-seleccionados ────────────────────────────────────────
+
+// GET /api/admin/preseleccionados - lista todos los influencers pre-seleccionados
+router.get('/preseleccionados', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT * FROM influencers_preseleccionados ORDER BY creado_en DESC`
+        );
+        return res.json({ success: true, preseleccionados: rows });
+    } catch (err) {
+        console.error('Error en GET /admin/preseleccionados:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// POST /api/admin/preseleccionados - crea registro, usuario y bono especial
+router.post('/preseleccionados', async (req, res) => {
+    const { nombre_completo, celular, email, seguidores, tasa_engagement, red_social, notas } = req.body;
+    if (!String(nombre_completo || '').trim()) {
+        return res.status(400).json({ success: false, error: 'Nombre requerido' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const nombre = String(nombre_completo).trim();
+        const celularNorm = celular ? String(celular).replace(/[^0-9+]/g, '').trim() : null;
+        const emailNorm = email ? String(email).trim().toLowerCase() : null;
+
+        // Buscar o crear usuario
+        let usuario;
+        if (celularNorm) {
+            const { rows: ex } = await client.query('SELECT * FROM usuarios WHERE celular = $1', [celularNorm]);
+            usuario = ex[0];
+        }
+        if (!usuario) {
+            const { rows } = await client.query(
+                'INSERT INTO usuarios (nombre, correo, celular) VALUES ($1, $2, $3) RETURNING *',
+                [nombre, emailNorm, celularNorm]
+            );
+            usuario = rows[0];
+        }
+
+        // Buscar partido activo para asociar el bono
+        const { rows: partidoRows } = await client.query(
+            `SELECT id FROM partidos WHERE estado = 'activo' ORDER BY fecha_hora_inicio ASC LIMIT 1`
+        );
+        if (partidoRows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'No hay partidos activos. Crea un partido primero.' });
+        }
+
+        // Crear transacción especial (30 intentos, $500.000 bono de servicios)
+        const { rows: transRows } = await client.query(
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago, es_especial)
+             VALUES ($1, $2, 'Especial', 500000, 500000, 30, 'APROBADO', TRUE)
+             RETURNING *`,
+            [usuario.id, partidoRows[0].id]
+        );
+        const transaccion = transRows[0];
+
+        // Pre-generar código de afiliado (se inserta en influencers solo al aceptar)
+        const base = nombre.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+            .replace(/[^a-z0-9]/g, '').slice(0, 12) || 'inf';
+        let codigo_afiliado;
+        for (let i = 0; i < 10; i++) {
+            const candidato = `${base}${Math.floor(100 + Math.random() * 900)}`;
+            const { rows: chk } = await client.query(
+                'SELECT 1 FROM influencers WHERE codigo_afiliado = $1 UNION SELECT 1 FROM influencers_preseleccionados WHERE codigo_afiliado = $1',
+                [candidato]
+            );
+            if (chk.length === 0) { codigo_afiliado = candidato; break; }
+        }
+        if (!codigo_afiliado) {
+            await client.query('ROLLBACK');
+            return res.status(500).json({ success: false, error: 'No se pudo generar código de afiliado' });
+        }
+
+        // Token único de invitación
+        const token_invitacion = crypto.randomBytes(16).toString('hex');
+
+        const { rows: presRows } = await client.query(
+            `INSERT INTO influencers_preseleccionados
+             (nombre_completo, celular, email, seguidores, tasa_engagement, red_social, notas,
+              token_invitacion, usuario_id, token_acceso, codigo_afiliado)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+            [nombre, celularNorm, emailNorm, seguidores || null, tasa_engagement || null,
+             red_social || null, notas || null, token_invitacion, usuario.id,
+             transaccion.token_acceso, codigo_afiliado]
+        );
+
+        await client.query('COMMIT');
+        return res.json({ success: true, preseleccionado: presRows[0] });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en POST /admin/preseleccionados:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
+// PATCH /api/admin/preseleccionados/:id - actualiza info del registro
+router.patch('/preseleccionados/:id', async (req, res) => {
+    const { nombre_completo, celular, email, seguidores, tasa_engagement, red_social, notas } = req.body;
+    try {
+        const { rows } = await pool.query(
+            `UPDATE influencers_preseleccionados
+             SET nombre_completo   = COALESCE($1, nombre_completo),
+                 celular           = COALESCE($2, celular),
+                 email             = COALESCE($3, email),
+                 seguidores        = COALESCE($4, seguidores),
+                 tasa_engagement   = COALESCE($5, tasa_engagement),
+                 red_social        = COALESCE($6, red_social),
+                 notas             = COALESCE($7, notas)
+             WHERE id = $8 RETURNING *`,
+            [nombre_completo || null, celular || null, email || null,
+             seguidores || null, tasa_engagement || null, red_social || null,
+             notas || null, req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
+        return res.json({ success: true, preseleccionado: rows[0] });
+    } catch (err) {
+        console.error('Error en PATCH /admin/preseleccionados/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// DELETE /api/admin/preseleccionados/:id - solo si no aceptó aún
+router.delete('/preseleccionados/:id', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT estado FROM influencers_preseleccionados WHERE id = $1', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'No encontrado' });
+        if (rows[0].estado === 'aceptado') {
+            return res.status(400).json({ success: false, error: 'No se puede eliminar: el influencer ya aceptó la invitación' });
+        }
+        await pool.query('DELETE FROM influencers_preseleccionados WHERE id = $1', [req.params.id]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en DELETE /admin/preseleccionados/:id:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/apuestas - pronósticos paginados de un partido (100 filas/página)
 // ?partido_id=X&page=1&limit=100&search=
 router.get('/apuestas', async (req, res) => {

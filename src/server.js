@@ -22,6 +22,7 @@ const influencersRouter = require('./routes/influencers');
 const referidosRouter = require('./routes/referidos');
 const gruposRouter = require('./routes/grupos');
 const checklistRouter = require('./routes/checklist');
+const invitacionRouter = require('./routes/invitacion');
 const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -97,6 +98,7 @@ app.use('/api/influencers', influencersLimiter, influencersRouter);
 app.use('/api/referidos', clicLimiter, referidosRouter);
 app.use('/api/grupo', pollaLimiter, gruposRouter);
 app.use('/api/admin/checklist', adminLimiter, checklistRouter);
+app.use('/api/invitacion', pollaLimiter, invitacionRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
@@ -781,6 +783,33 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS opt_out_email BOOLEAN NOT NULL DEFAULT FALSE`);
     } catch (err) {
         console.error('Error aplicando migración de opt_out_email:', err.message);
+    }
+
+    // CRM de influencers pre-seleccionados: el admin crea el registro con los
+    // datos del influencer (seguidores, engagement, etc.), el sistema genera la
+    // cuenta y los links automáticamente. Al aceptar la invitación quedan activos.
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS influencers_preseleccionados (
+                id               SERIAL PRIMARY KEY,
+                nombre_completo  TEXT NOT NULL,
+                celular          TEXT,
+                email            TEXT,
+                seguidores       INTEGER,
+                tasa_engagement  NUMERIC(5,2),
+                red_social       TEXT CHECK (red_social IS NULL OR red_social IN ('instagram', 'tiktok', 'ambas')),
+                notas            TEXT,
+                estado           TEXT NOT NULL DEFAULT 'pendiente'
+                                     CHECK (estado IN ('pendiente', 'aceptado')),
+                token_invitacion TEXT UNIQUE NOT NULL,
+                usuario_id       INTEGER REFERENCES usuarios(id),
+                token_acceso     TEXT,
+                codigo_afiliado  TEXT,
+                creado_en        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla influencers_preseleccionados:', err.message);
     }
 
     iniciarMonitorMarcadores();
