@@ -481,7 +481,7 @@ router.put('/equipos-favoritos', async (req, res) => {
 // POST /api/polla/pronostico-landing
 // Captura de lead: crea usuario + transacción gratis + pronóstico en un paso.
 // Usado por la landing de partidos de Colombia para viralización.
-router.post('/pronostico-landing', pollaLimiter, async (req, res) => {
+router.post('/pronostico-landing', async (req, res) => {
     const { nombre, apellido, celular, partido_id, pred_local, pred_visitante } = req.body;
 
     if (!String(nombre || '').trim() || !String(apellido || '').trim()) {
