@@ -478,6 +478,114 @@ router.put('/equipos-favoritos', async (req, res) => {
     }
 });
 
+// POST /api/polla/pronostico-landing
+// Captura de lead: crea usuario + transacción gratis + pronóstico en un paso.
+// Usado por la landing de partidos de Colombia para viralización.
+router.post('/pronostico-landing', pollaLimiter, async (req, res) => {
+    const { nombre, apellido, celular, partido_id, pred_local, pred_visitante } = req.body;
+
+    if (!String(nombre || '').trim() || !String(apellido || '').trim()) {
+        return res.status(400).json({ success: false, error: 'Nombre y apellido son requeridos' });
+    }
+    const celularNorm = String(celular || '').replace(/[^0-9+]/g, '').trim();
+    if (celularNorm.length < 7) {
+        return res.status(400).json({ success: false, error: 'Celular inválido' });
+    }
+    if (!partido_id || typeof pred_local !== 'number' || typeof pred_visitante !== 'number' ||
+        !Number.isInteger(pred_local) || !Number.isInteger(pred_visitante) ||
+        pred_local < 0 || pred_visitante < 0 || pred_local > 20 || pred_visitante > 20) {
+        return res.status(400).json({ success: false, error: 'Marcador inválido' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows: partRows } = await client.query(
+            `SELECT * FROM partidos WHERE id = $1 AND estado = 'activo'`, [partido_id]
+        );
+        if (partRows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Partido no encontrado o inactivo' });
+        }
+        const partido = partRows[0];
+
+        const msRestantes = new Date(partido.fecha_hora_inicio).getTime() - Date.now();
+        if (msRestantes < 5 * 60 * 1000) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ success: false, error: 'La votación ya cerró (5 min antes del partido)' });
+        }
+
+        // Buscar o crear usuario por celular
+        const nombreCompleto = `${String(nombre).trim()} ${String(apellido).trim()}`;
+        let usuario;
+        const { rows: exUser } = await client.query('SELECT * FROM usuarios WHERE celular = $1', [celularNorm]);
+        if (exUser.length > 0) {
+            usuario = exUser[0];
+        } else {
+            const { rows } = await client.query(
+                'INSERT INTO usuarios (nombre, celular) VALUES ($1, $2) RETURNING *',
+                [nombreCompleto, celularNorm]
+            );
+            usuario = rows[0];
+        }
+
+        // Si ya tiene pronóstico para este partido, devolver el existente
+        const { rows: pronExiste } = await client.query(
+            `SELECT p.goles_local, p.goles_visitante, t.token_acceso
+             FROM pronosticos p
+             JOIN transacciones t ON t.id = p.transaccion_id
+             WHERE p.usuario_id = $1 AND p.partido_id = $2 LIMIT 1`,
+            [usuario.id, partido_id]
+        );
+        if (pronExiste.length > 0) {
+            await client.query('ROLLBACK');
+            return res.json({
+                success: true,
+                token_acceso: pronExiste[0].token_acceso,
+                nombre: usuario.nombre,
+                partido: { equipo_local: partido.equipo_local, equipo_visitante: partido.equipo_visitante, id: partido.id },
+                pred_local: pronExiste[0].goles_local,
+                pred_visitante: pronExiste[0].goles_visitante,
+                ya_registrado: true,
+            });
+        }
+
+        // Crear transacción gratuita de landing (1 intento, $0)
+        const costoFase = COSTO_CUPO_FASE[partido.fase] ?? 1;
+        const { rows: transRows } = await client.query(
+            `INSERT INTO transacciones (usuario_id, partido_id, metodo, valor_pagado, saldo_bono, intentos_totales, estado_pago)
+             VALUES ($1, $2, 'Landing', 0, 0, $3, 'APROBADO') RETURNING *`,
+            [usuario.id, partido_id, costoFase]
+        );
+        const trans = transRows[0];
+
+        // Registrar pronóstico
+        await client.query(
+            `INSERT INTO pronosticos (transaccion_id, usuario_id, partido_id, goles_local, goles_visitante, cupos_costo)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [trans.id, usuario.id, partido_id, pred_local, pred_visitante, costoFase]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            token_acceso: trans.token_acceso,
+            nombre: usuario.nombre,
+            partido: { equipo_local: partido.equipo_local, equipo_visitante: partido.equipo_visitante, id: partido.id },
+            pred_local,
+            pred_visitante,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en /pronostico-landing:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
 // POST /api/polla/votar
 // Registra el pronóstico (un marcador) de un usuario para un partido, consumiendo 1 cupo de su monedero.
 router.post('/votar', votarLimiter, async (req, res) => {
