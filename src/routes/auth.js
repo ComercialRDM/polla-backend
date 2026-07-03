@@ -1,7 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
 const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
@@ -29,17 +28,6 @@ const RESET_INTENTOS_MAX = 5;
 
 const TELEFONO_REGISTRO_TOKEN_VIGENCIA_MIN = 10;
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-// Verifica el ID token de Google y devuelve su payload (sub, email, name, email_verified)
-async function verificarTokenGoogle(credential) {
-    const ticket = await googleClient.verifyIdToken({
-        idToken: credential,
-        audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    return ticket.getPayload();
-}
-
 function normalizarCelular(celular) {
     return String(celular || '').replace(/[^0-9+]/g, '').trim();
 }
@@ -47,143 +35,6 @@ function normalizarCelular(celular) {
 function generarCodigoOTP() {
     return String(crypto.randomInt(100000, 1000000));
 }
-
-// POST /api/auth/registro - crea la cuenta (celular + contraseña + nombre) o reclama una cuenta existente
-router.post('/registro', async (req, res) => {
-    const { celular, password, nombre, correo, equipos_favoritos } = req.body;
-
-    const celularNormalizado = normalizarCelular(celular);
-    const nombreLimpio = String(nombre || '').trim();
-    const correoLimpio = String(correo || '').trim().toLowerCase();
-
-    if (!celularNormalizado || celularNormalizado.length < 7) {
-        return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
-    }
-    if (!nombreLimpio) {
-        return res.status(400).json({ success: false, error: 'Ingresa tu nombre completo' });
-    }
-    if (!correoLimpio || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoLimpio)) {
-        return res.status(400).json({ success: false, error: 'Ingresa un correo electrónico válido' });
-    }
-    if (!password || password.length < 8) {
-        return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 8 caracteres' });
-    }
-    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
-        return res.status(400).json({ success: false, error: 'La contraseña debe tener mayúscula, minúscula y número' });
-    }
-
-    const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
-
-    try {
-        const [{ rows: porCelular }, { rows: porCorreo }] = await Promise.all([
-            pool.query(
-                `SELECT id, password_hash FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-                [celularNormalizado]
-            ),
-            pool.query(
-                `SELECT id FROM usuarios WHERE correo = $1 AND password_hash IS NOT NULL`,
-                [correoLimpio]
-            ),
-        ]);
-
-        const celularTieneCuenta = porCelular.length > 0 && !!porCelular[0].password_hash;
-        const correoTieneCuenta = porCorreo.length > 0;
-
-        if (celularTieneCuenta && correoTieneCuenta) {
-            return res.status(409).json({ success: false, error: 'Ya hay una cuenta creada con este correo electrónico y número de celular. Inicia sesión.' });
-        }
-        if (celularTieneCuenta) {
-            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este número de celular. Inicia sesión.' });
-        }
-        if (correoTieneCuenta) {
-            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este correo electrónico. Inicia sesión.' });
-        }
-
-        const passwordHash = await bcrypt.hash(password, 10);
-        let usuario;
-
-        if (porCelular.length > 0) {
-            // Usuario de prueba (sin contraseña) — reclamar la cuenta
-            const { rows } = await pool.query(
-                `UPDATE usuarios SET nombre = $1, password_hash = $2, correo = $3, equipos_favoritos = $4 WHERE id = $5
-                 RETURNING id, nombre, celular, correo, equipos_favoritos, calendario_token`,
-                [nombreLimpio, passwordHash, correoLimpio, equipos, porCelular[0].id]
-            );
-            usuario = rows[0];
-        } else {
-            const { rows } = await pool.query(
-                `INSERT INTO usuarios (nombre, celular, correo, password_hash, equipos_favoritos) VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, nombre, celular, correo, equipos_favoritos, calendario_token`,
-                [nombreLimpio, celularNormalizado, correoLimpio, passwordHash, equipos]
-            );
-            usuario = rows[0];
-        }
-
-        await registrarEvento({
-            tabla: 'usuarios',
-            registroId: usuario.id,
-            accion: 'registro',
-            actor: String(usuario.id),
-            ip: obtenerIp(req),
-            userAgent: req.headers['user-agent'],
-        });
-
-        const tokenUsuario = generarTokenUsuario(usuario);
-        setCookieSesion(res, tokenUsuario);
-        return res.json({ success: true, usuario, token: tokenUsuario });
-    } catch (err) {
-        console.error('Error en /auth/registro:', err);
-        if (err.code === '23505') {
-            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con estos datos. Inicia sesión.' });
-        }
-        return res.status(500).json({ success: false, error: 'Error interno' });
-    }
-});
-
-// POST /api/auth/login - inicia sesión con celular + contraseña
-router.post('/login', async (req, res) => {
-    const { celular, password } = req.body;
-    const celularNormalizado = normalizarCelular(celular);
-
-    if (!celularNormalizado || !password) {
-        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
-    }
-
-    try {
-        const { rows } = await pool.query(
-            `SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token, password_hash FROM usuarios
-             WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-            [celularNormalizado]
-        );
-
-        if (rows.length === 0 || !rows[0].password_hash) {
-            return res.status(404).json({ success: false, error: 'No encontramos una cuenta con este celular. Regístrate primero.' });
-        }
-
-        const valido = await bcrypt.compare(password, rows[0].password_hash);
-        if (!valido) {
-            return res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
-        }
-
-        const { password_hash, ...usuario } = rows[0];
-
-        await registrarEvento({
-            tabla: 'usuarios',
-            registroId: usuario.id,
-            accion: 'login',
-            actor: String(usuario.id),
-            ip: obtenerIp(req),
-            userAgent: req.headers['user-agent'],
-        });
-
-        const tokenUsuario = generarTokenUsuario(usuario);
-        setCookieSesion(res, tokenUsuario);
-        return res.json({ success: true, usuario, token: tokenUsuario });
-    } catch (err) {
-        console.error('Error en /auth/login:', err);
-        return res.status(500).json({ success: false, error: 'Error interno' });
-    }
-});
 
 // POST /api/auth/telefono/solicitar-codigo - manda el código de verificación por SMS
 // vía Twilio Verify, para "Continuar con teléfono" (login/registro sin contraseña)
@@ -439,13 +290,6 @@ router.post('/restablecer-password', async (req, res) => {
     }
 });
 
-// GET /api/auth/google/diagnostico - verifica que GOOGLE_CLIENT_ID esté bien configurado
-// Protegido con adminAuth: expone prefijos de credenciales, no debe ser público.
-router.get('/google/diagnostico', adminAuth, (req, res) => {
-    const id = process.env.GOOGLE_CLIENT_ID || '';
-    res.json({ configurado: !!id, prefijo: id ? id.substring(0, 25) + '...' : '(vacío)' });
-});
-
 // GET /api/auth/manychat/diagnostico - verifica que MANYCHAT_API_KEY esté configurada
 router.get('/manychat/diagnostico', adminAuth, (req, res) => {
     const key = process.env.MANYCHAT_API_KEY || '';
@@ -461,148 +305,6 @@ router.get('/smtp/diagnostico', adminAuth, (req, res) => {
         SMTP_PASS: process.env.SMTP_PASS ? '✓ configurado' : '(vacío)',
         MAIL_FROM: process.env.MAIL_FROM || '(vacío)',
     });
-});
-
-// POST /api/auth/google - inicia sesión (o detecta cuenta nueva) con un ID token de Google
-router.post('/google', async (req, res) => {
-    const { credential } = req.body;
-
-    if (!credential) {
-        return res.status(400).json({ success: false, error: 'Falta el token de Google' });
-    }
-    if (!process.env.GOOGLE_CLIENT_ID) {
-        return res.status(500).json({ success: false, error: 'Login con Google no configurado' });
-    }
-
-    try {
-        const payload = await verificarTokenGoogle(credential);
-        const googleId = payload.sub;
-        const correo = payload.email;
-        const nombre = payload.name || '';
-
-        const { rows: porGoogleId } = await pool.query(
-            'SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token FROM usuarios WHERE google_id = $1',
-            [googleId]
-        );
-        if (porGoogleId.length > 0) {
-            await registrarEvento({
-                tabla: 'usuarios',
-                registroId: porGoogleId[0].id,
-                accion: 'login_google',
-                actor: String(porGoogleId[0].id),
-                ip: obtenerIp(req),
-                userAgent: req.headers['user-agent'],
-            });
-            const tokenUsuario = generarTokenUsuario(porGoogleId[0]);
-            setCookieSesion(res, tokenUsuario);
-            return res.json({ success: true, usuario: porGoogleId[0], token: tokenUsuario });
-        }
-
-        // Si ya existe una cuenta con ese correo verificado, se vincula a la cuenta de Google
-        if (correo && payload.email_verified) {
-            const { rows: porCorreo } = await pool.query(
-                'SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token FROM usuarios WHERE correo = $1',
-                [correo]
-            );
-            if (porCorreo.length > 0) {
-                await pool.query('UPDATE usuarios SET google_id = $1 WHERE id = $2', [googleId, porCorreo[0].id]);
-                await registrarEvento({
-                    tabla: 'usuarios',
-                    registroId: porCorreo[0].id,
-                    accion: 'vincular_google',
-                    actor: String(porCorreo[0].id),
-                    ip: obtenerIp(req),
-                    userAgent: req.headers['user-agent'],
-                });
-                const tokenUsuario = generarTokenUsuario(porCorreo[0]);
-                setCookieSesion(res, tokenUsuario);
-                return res.json({ success: true, usuario: porCorreo[0], token: tokenUsuario });
-            }
-        }
-
-        // Cuenta nueva: el frontend debe pedir el celular antes de crearla
-        return res.json({
-            success: true,
-            nuevo: true,
-            datos: { nombre, correo: correo || '' },
-        });
-    } catch (err) {
-        console.error('Error en /auth/google:', err.message);
-        const detalle = err.message?.includes('audience') ? 'client_id no coincide'
-            : err.message?.includes('expired') ? 'token expirado'
-            : err.message;
-        return res.status(401).json({ success: false, error: 'Token de Google inválido', detalle });
-    }
-});
-
-// POST /api/auth/google/completar - crea (o vincula) la cuenta de un usuario nuevo de Google con su celular
-router.post('/google/completar', async (req, res) => {
-    const { credential, celular, equipos_favoritos } = req.body;
-    const celularNormalizado = normalizarCelular(celular);
-
-    if (!credential) {
-        return res.status(400).json({ success: false, error: 'Falta el token de Google' });
-    }
-    if (!celularNormalizado || celularNormalizado.length < 7) {
-        return res.status(400).json({ success: false, error: 'Ingresa un número de celular válido' });
-    }
-    if (!process.env.GOOGLE_CLIENT_ID) {
-        return res.status(500).json({ success: false, error: 'Login con Google no configurado' });
-    }
-
-    const equipos = Array.isArray(equipos_favoritos) ? equipos_favoritos.slice(0, 5) : [];
-
-    try {
-        const payload = await verificarTokenGoogle(credential);
-        const googleId = payload.sub;
-        const correo = payload.email_verified ? payload.email : null;
-        const nombre = payload.name || '';
-
-        const { rows: existentes } = await pool.query(
-            `SELECT id, google_id FROM usuarios WHERE regexp_replace(celular, '[^0-9+]', '', 'g') = $1`,
-            [celularNormalizado]
-        );
-
-        let usuario;
-        if (existentes.length > 0) {
-            if (existentes[0].google_id && existentes[0].google_id !== googleId) {
-                return res.status(409).json({ success: false, error: 'Este celular ya está vinculado a otra cuenta de Google.' });
-            }
-
-            const { rows } = await pool.query(
-                `UPDATE usuarios SET google_id = $1 WHERE id = $2
-                 RETURNING id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token`,
-                [googleId, existentes[0].id]
-            );
-            usuario = rows[0];
-        } else {
-            const { rows } = await pool.query(
-                `INSERT INTO usuarios (nombre, correo, celular, google_id, equipos_favoritos) VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token`,
-                [nombre || 'Usuario', correo, celularNormalizado, googleId, equipos]
-            );
-            usuario = rows[0];
-        }
-
-        await registrarEvento({
-            tabla: 'usuarios',
-            registroId: usuario.id,
-            accion: existentes.length > 0 ? 'vincular_google' : 'registro_google',
-            actor: String(usuario.id),
-            ip: obtenerIp(req),
-            userAgent: req.headers['user-agent'],
-        });
-
-        const tokenUsuario = generarTokenUsuario(usuario);
-        setCookieSesion(res, tokenUsuario);
-        return res.json({ success: true, usuario, token: tokenUsuario });
-    } catch (err) {
-        console.error('Error en /auth/google/completar:', err);
-        if (err.code === '23505') {
-            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con este celular o correo.' });
-        }
-        return res.status(401).json({ success: false, error: 'Token de Google inválido' });
-    }
 });
 
 // POST /api/auth/logout - elimina la cookie de sesión del usuario
