@@ -117,7 +117,7 @@ async function main() {
                 // celular es NOT NULL en usuarios; si no tienen número usamos
                 // un placeholder interno único (no se usa para auth ni SMS).
                 const celularFinal = inf.celular
-                    || `INF_${inf.nombre_completo.replace(/\s+/g, '_').toUpperCase().slice(0, 20)}_${Date.now()}`;
+                    || `INF${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 
                 let usuario;
                 if (inf.email) {

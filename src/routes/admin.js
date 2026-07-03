@@ -1034,7 +1034,7 @@ router.post('/preseleccionados', async (req, res) => {
         const celularNorm = celular ? String(celular).replace(/[^0-9+]/g, '').trim() : null;
         const emailNorm = email ? String(email).trim().toLowerCase() : null;
         // celular es NOT NULL en usuarios; si no tienen número usamos placeholder interno
-        const celularFinal = celularNorm || `INF_${nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 20)}_${Date.now()}`;
+        const celularFinal = celularNorm || `INF${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 
         // Buscar o crear usuario
         let usuario;
