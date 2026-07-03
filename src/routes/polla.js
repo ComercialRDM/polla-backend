@@ -263,6 +263,14 @@ router.get('/info', async (req, res) => {
         const pts_siguiente = sigInfoRows[0]?.puntos_siguiente != null ? parseInt(sigInfoRows[0].puntos_siguiente) : null;
         const puntos_para_superar_info = pts_siguiente != null ? pts_siguiente - puntos_info : null;
 
+        const { rows: referidosRows } = await pool.query(
+            `SELECT COUNT(*)::int AS amigos_compraron
+             FROM transacciones
+             WHERE referido_por_token = $1 AND referido_bono_otorgado = TRUE`,
+            [token]
+        );
+        const amigos_compraron = referidosRows[0]?.amigos_compraron || 0;
+
         return res.json({
             acceso: true,
             nombre,
@@ -292,6 +300,7 @@ router.get('/info', async (req, res) => {
             posicion: posInfoRows[0].posicion,
             total_participantes: total_participantes_info,
             puntos_para_superar: puntos_para_superar_info,
+            amigos_compraron,
         });
     } catch (err) {
         console.error('Error en /polla/info:', err);
@@ -856,6 +865,57 @@ router.get('/mis-pronosticos', usuarioAuth, async (req, res) => {
         return res.json({ success: true, pronosticos: rows });
     } catch (err) {
         console.error('Error en /polla/mis-pronosticos:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/polla/mis-pronosticos-token?token_acceso=xxx — historial de pronósticos por token (sin JWT)
+router.get('/mis-pronosticos-token', async (req, res) => {
+    const { token_acceso } = req.query;
+    if (!token_acceso) return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+
+    try {
+        const { rows: uRows } = await pool.query(
+            `SELECT DISTINCT u.id AS usuario_id
+             FROM transacciones t JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO' LIMIT 1`,
+            [token_acceso]
+        );
+        if (!uRows[0]) return res.status(401).json({ success: false, error: 'Token no válido' });
+
+        const usuario_id = uRows[0].usuario_id;
+        const { rows } = await pool.query(
+            `SELECT
+                pr.id,
+                pr.goles_local        AS pred_local,
+                pr.goles_visitante    AS pred_visitante,
+                pr.created_at,
+                pr.es_flash,
+                p.id                  AS partido_id,
+                p.equipo_local,
+                p.equipo_visitante,
+                p.goles_local         AS res_local,
+                p.goles_visitante     AS res_visitante,
+                p.estado,
+                p.fase,
+                p.fecha_hora_inicio,
+                CASE
+                    WHEN p.estado != 'cerrado' THEN NULL
+                    ELSE ${casePuntajeSQL(
+                        'p.fase',
+                        "p.goles_local = pr.goles_local AND p.goles_visitante = pr.goles_visitante",
+                        "((pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)) AND NOT (p.goles_local = pr.goles_local AND p.goles_visitante = pr.goles_visitante)"
+                    )}
+                END AS puntos_partido
+             FROM pronosticos pr
+             JOIN partidos p ON p.id = pr.partido_id
+             WHERE pr.usuario_id = $1
+             ORDER BY p.fecha_hora_inicio DESC`,
+            [usuario_id]
+        );
+        return res.json({ success: true, pronosticos: rows });
+    } catch (err) {
+        console.error('Error en /polla/mis-pronosticos-token:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
