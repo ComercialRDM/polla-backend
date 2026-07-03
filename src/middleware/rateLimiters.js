@@ -126,4 +126,19 @@ const clicLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.' },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter };
+// Limita el landing de Colombia a 2 pronósticos por IP cada 24 horas para
+// frenar números inventados y envíos masivos desde el mismo dispositivo.
+const landingLimiter = rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    limit: 2,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => obtenerIp(req),
+    message: { success: false, error: 'Ya registraste el máximo de pronósticos permitidos hoy. Intenta mañana.' },
+    handler: (req, res, next, options) => {
+        registrarEvento('RATE_LIMIT_LANDING', { ip: obtenerIp(req) });
+        res.status(429).json(options.message);
+    },
+});
+
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter, landingLimiter };

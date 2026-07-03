@@ -12,7 +12,7 @@ const { notificar } = require('../utils/sse');
 const { generarICS } = require('../services/calendarioService');
 
 const uploadFoto = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-const { votarLimiter } = require('../middleware/rateLimiters');
+const { votarLimiter, landingLimiter } = require('../middleware/rateLimiters');
 const usuarioAuth = require('../middleware/usuarioAuth');
 const { obtenerRankingEspeciales } = require('../services/especialesService');
 const { obtenerIp } = require('../utils/request');
@@ -481,15 +481,15 @@ router.put('/equipos-favoritos', async (req, res) => {
 // POST /api/polla/pronostico-landing
 // Captura de lead: crea usuario + transacción gratis + pronóstico en un paso.
 // Usado por la landing de partidos de Colombia para viralización.
-router.post('/pronostico-landing', async (req, res) => {
+router.post('/pronostico-landing', landingLimiter, async (req, res) => {
     const { nombre, apellido, celular, partido_id, pred_local, pred_visitante } = req.body;
 
     if (!String(nombre || '').trim() || !String(apellido || '').trim()) {
         return res.status(400).json({ success: false, error: 'Nombre y apellido son requeridos' });
     }
-    const celularNorm = String(celular || '').replace(/[^0-9+]/g, '').trim();
-    if (celularNorm.length < 7) {
-        return res.status(400).json({ success: false, error: 'Celular inválido' });
+    const celularNorm = String(celular || '').replace(/[^0-9]/g, '').trim();
+    if (celularNorm.length !== 10 || !celularNorm.startsWith('3')) {
+        return res.status(400).json({ success: false, error: 'Ingresa un número de celular colombiano válido (10 dígitos, empieza por 3)' });
     }
     if (!partido_id || typeof pred_local !== 'number' || typeof pred_visitante !== 'number' ||
         !Number.isInteger(pred_local) || !Number.isInteger(pred_visitante) ||
