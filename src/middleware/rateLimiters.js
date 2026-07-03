@@ -77,9 +77,8 @@ const otpLimiter = rateLimit({
     limit: 5,
     standardHeaders: true,
     legacyHeaders: false,
-    validate: { ip: false },
     message: { success: false, error: 'Demasiados códigos solicitados. Espera una hora e inténtalo de nuevo.' },
-    keyGenerator: (req) => (req.body?.celular ? `otp:${req.body.celular}` : req.ip),
+    keyGenerator: (req) => (req.body?.celular ? `otp:${req.body.celular}` : obtenerIp(req)),
 });
 
 // Límite genérico para webhooks externos (Wompi, ManyChat, proveedor de marcadores
@@ -103,9 +102,8 @@ const resetPasswordLimiter = rateLimit({
     limit: 5,
     standardHeaders: true,
     legacyHeaders: false,
-    validate: { ip: false },
     message: { success: false, error: 'Demasiadas solicitudes de restablecimiento. Espera una hora e inténtalo de nuevo.' },
-    keyGenerator: (req) => (req.body?.celular ? `reset:${req.body.celular}` : req.ip),
+    keyGenerator: (req) => (req.body?.celular ? `reset:${req.body.celular}` : obtenerIp(req)),
 });
 
 // Limita el formulario público de registro de influencers/creadores de
