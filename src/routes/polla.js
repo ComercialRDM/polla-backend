@@ -2,7 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const multer = require('multer');
 const pool = require('../db');
-const { enviarCorreoNotificacionVoto } = require('../services/emailService');
+const { enviarCorreoNotificacionVoto, enviarCorreoOTP } = require('../services/emailService');
+const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
 const { generarImagenBono } = require('../services/bonoService');
 const { obtenerSaldoUsuario } = require('../services/walletService');
 const { CUPO_VALOR } = require('../config/planes');
@@ -1391,16 +1392,81 @@ router.patch('/dispositivo', async (req, res) => {
 // Usa token_acceso (polla token) para identificar la transacción, igual que
 // el resto de endpoints de polla (no requiere sesión de usuario separada).
 
+// POST /api/polla/confirmar-regalo - envía OTP al celular o correo del dueño del bono
+// para confirmar que es él quien solicita el regalo antes de ejecutarlo.
+router.post('/confirmar-regalo', async (req, res) => {
+    const { token_acceso } = req.body;
+    if (!token_acceso) return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+    try {
+        const { rows } = await pool.query(
+            `SELECT u.celular, u.correo FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 AND t.estado_pago = 'APROBADO' LIMIT 1`,
+            [token_acceso]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Bono no encontrado' });
+
+        const { celular, correo } = rows[0];
+        const celValido = celular && /^\+?[0-9]{10,}$/.test(celular.replace(/\s/g, ''));
+
+        if (celValido) {
+            await enviarCodigoTwilio(celular);
+            return res.json({ success: true, metodo: 'sms', destino: `***${celular.slice(-4)}` });
+        } else if (correo) {
+            const codigo = String(crypto.randomInt(100000, 1000000));
+            await pool.query(
+                `INSERT INTO codigos_correo (correo, codigo, expira, intentos)
+                 VALUES ($1, $2, now() + interval '10 minutes', 0)
+                 ON CONFLICT (correo) DO UPDATE SET codigo = EXCLUDED.codigo, expira = EXCLUDED.expira, intentos = 0`,
+                [correo.toLowerCase(), codigo]
+            );
+            await enviarCorreoOTP({ destinatario: correo, codigo });
+            const partes = correo.split('@');
+            return res.json({ success: true, metodo: 'correo', destino: `${partes[0].slice(0, 3)}***@${partes[1]}` });
+        }
+        return res.status(400).json({ success: false, error: 'No hay contacto registrado para confirmar' });
+    } catch (err) {
+        console.error('POST /polla/confirmar-regalo:', err.message);
+        return res.status(500).json({ success: false, error: 'Error al enviar el código de confirmación' });
+    }
+});
+
 // POST /api/polla/regalo/solicitar
 router.post('/regalo/solicitar', async (req, res) => {
-    const { token_acceso, receptor_nombre, receptor_cedula, receptor_celular, receptor_correo, acepta_terminos } = req.body;
+    const { token_acceso, receptor_nombre, receptor_cedula, receptor_celular, receptor_correo, acepta_terminos, codigo_confirmacion } = req.body;
     if (!token_acceso || !receptor_nombre?.trim() || !receptor_cedula?.trim() || !receptor_celular?.trim()) {
         return res.status(400).json({ success: false, error: 'Faltan campos obligatorios' });
     }
     if (!acepta_terminos) {
         return res.status(400).json({ success: false, error: 'Debes aceptar los términos para continuar' });
     }
+    if (!codigo_confirmacion) {
+        return res.status(400).json({ success: false, error: 'Se requiere código de confirmación' });
+    }
     try {
+        // Validar OTP antes de procesar el regalo
+        const { rows: userRows } = await pool.query(
+            `SELECT u.celular, u.correo FROM transacciones t
+             JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.token_acceso = $1 LIMIT 1`,
+            [token_acceso]
+        );
+        if (userRows.length > 0) {
+            const { celular, correo } = userRows[0];
+            const celValido = celular && /^\+?[0-9]{10,}$/.test(celular.replace(/\s/g, ''));
+            if (celValido) {
+                const valido = await verificarCodigoTwilio(celular, codigo_confirmacion);
+                if (!valido) return res.status(400).json({ success: false, error: 'Código de confirmación incorrecto o vencido' });
+            } else if (correo) {
+                const { rows: otpRows } = await pool.query(
+                    `SELECT 1 FROM codigos_correo WHERE correo = $1 AND codigo = $2 AND expira > now() AND intentos < 5`,
+                    [correo.toLowerCase(), String(codigo_confirmacion).trim()]
+                );
+                if (otpRows.length === 0) return res.status(400).json({ success: false, error: 'Código de confirmación incorrecto o vencido' });
+                await pool.query('DELETE FROM codigos_correo WHERE correo = $1', [correo.toLowerCase()]);
+            }
+        }
+
         const { rows: txRows } = await pool.query(
             `SELECT id, saldo_bono, usuario_id FROM transacciones
              WHERE token_acceso = $1 AND estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE`,
