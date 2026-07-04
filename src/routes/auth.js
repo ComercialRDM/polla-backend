@@ -241,7 +241,7 @@ router.post('/correo/verificar-codigo', async (req, res) => {
         await pool.query('DELETE FROM codigos_correo WHERE correo = $1', [correo]);
 
         const { rows: usuarioRows } = await pool.query(
-            'SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token FROM usuarios WHERE correo = $1',
+            'SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token FROM usuarios WHERE LOWER(correo) = $1',
             [correo]
         );
         if (usuarioRows.length > 0) {
