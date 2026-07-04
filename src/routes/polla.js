@@ -268,7 +268,7 @@ router.get('/info', async (req, res) => {
             `SELECT COUNT(*)::int AS amigos_compraron
              FROM transacciones
              WHERE referido_por_token = $1 AND referido_bono_otorgado = TRUE`,
-            [token]
+            [token_acceso]
         );
         const amigos_compraron = referidosRows[0]?.amigos_compraron || 0;
 
