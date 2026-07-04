@@ -147,6 +147,24 @@ router.get('/2fa/estado', async (req, res) => {
     }
 });
 
+// POST /api/admin/2fa/verificar - verifica un código TOTP con sesión ya activa
+router.post('/2fa/verificar', async (req, res) => {
+    const { code } = req.body;
+    const adminId = req.admin.id;
+    if (!code) return res.status(400).json({ success: false, error: 'Falta code' });
+    try {
+        const { rows } = await pool.query('SELECT totp_secret, totp_enabled FROM admin_usuarios WHERE id = $1', [adminId]);
+        if (!rows[0].totp_enabled) return res.json({ success: true });
+        if (!rows[0].totp_secret) return res.status(400).json({ success: false, error: '2FA no configurado' });
+        const valido = speakeasy.totp.verify({ secret: rows[0].totp_secret, encoding: 'base32', token: code, window: 1 });
+        if (!valido) return res.status(401).json({ success: false, error: 'Código incorrecto' });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /admin/2fa/verificar:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/admin/reportes?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
 router.get('/reportes', async (req, res) => {
     const { fecha_inicio, fecha_fin } = req.query;
