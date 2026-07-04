@@ -2,11 +2,19 @@ const rateLimit = require('express-rate-limit');
 const { registrarEvento } = require('../services/alertaService');
 const { obtenerIp } = require('../utils/request');
 
+// IPs y celulares exentos de rate limiting (solo para pruebas internas)
+const TEST_IPS     = new Set(['104.166.164.8']);
+const TEST_PHONES  = new Set(['3012786234', '+573012786234']);
+const skipTest = (req) =>
+    TEST_IPS.has(obtenerIp(req)) ||
+    (req.body?.celular && TEST_PHONES.has(String(req.body.celular).replace(/^\+57/, '')));
+
 // Limita login, registro y recuperación de contraseña para frenar fuerza bruta
 // y abuso del envío de OTP por WhatsApp (ManyChat)
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 30,
+    skip: skipTest,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' },
@@ -75,6 +83,7 @@ const votarLimiter = rateLimit({
 const otpLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     limit: 5,
+    skip: skipTest,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiados códigos solicitados. Espera una hora e inténtalo de nuevo.' },
@@ -100,6 +109,7 @@ const webhooksLimiter = rateLimit({
 const resetPasswordLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     limit: 5,
+    skip: skipTest,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiadas solicitudes de restablecimiento. Espera una hora e inténtalo de nuevo.' },
@@ -131,6 +141,7 @@ const clicLimiter = rateLimit({
 const landingLimiter = rateLimit({
     windowMs: 24 * 60 * 60 * 1000,
     limit: 5,
+    skip: skipTest,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => obtenerIp(req),
