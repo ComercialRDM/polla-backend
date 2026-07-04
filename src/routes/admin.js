@@ -165,6 +165,28 @@ router.post('/2fa/verificar', async (req, res) => {
     }
 });
 
+// GET /api/admin/diagnostico-usuario?celular=XXXXXXXXXX - diagnóstico temporal
+router.get('/diagnostico-usuario', async (req, res) => {
+    const { celular } = req.query;
+    if (!celular) return res.status(400).json({ error: 'Falta celular' });
+    try {
+        const { rows: usuarios } = await pool.query(
+            'SELECT id, nombre, celular, correo FROM usuarios WHERE celular = $1',
+            [celular]
+        );
+        if (!usuarios.length) return res.json({ encontrado: false, celular });
+        const usuario = usuarios[0];
+        const { rows: transacciones } = await pool.query(
+            `SELECT id, token_acceso, estado_pago, metodo, es_especial, valor_pagado, saldo_bono, fecha_creacion
+             FROM transacciones WHERE usuario_id = $1 ORDER BY id DESC`,
+            [usuario.id]
+        );
+        return res.json({ encontrado: true, usuario, transacciones });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/admin/reportes?fecha_inicio=YYYY-MM-DD&fecha_fin=YYYY-MM-DD
 router.get('/reportes', async (req, res) => {
     const { fecha_inicio, fecha_fin } = req.query;
