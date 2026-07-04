@@ -98,7 +98,18 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
             });
             const tokenUsuario = generarTokenUsuario(usuarioRows[0]);
             setCookieSesion(res, tokenUsuario);
-            return res.json({ success: true, usuario: usuarioRows[0], token: tokenUsuario });
+            const { rows: tokenRows } = await pool.query(
+                `SELECT token_acceso FROM transacciones
+                 WHERE usuario_id = $1 AND estado_pago = 'APROBADO'
+                 ORDER BY fecha_pago DESC NULLS LAST LIMIT 1`,
+                [usuarioRows[0].id]
+            );
+            return res.json({
+                success: true,
+                usuario: usuarioRows[0],
+                token: tokenUsuario,
+                token_acceso: tokenRows[0]?.token_acceso || null,
+            });
         }
 
         const registroToken = crypto.randomUUID();
