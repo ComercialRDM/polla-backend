@@ -438,11 +438,10 @@ router.patch('/partidos/:id', async (req, res) => {
         }
         const partido = rows[0];
 
-        // Bono Colombia $1M: se activa al cerrar un partido de Colombia en fase grupos con marcador
+        // Bono Colombia $1M: se activa al cerrar cualquier partido de Colombia (todas las fases)
         let bonoColombia = null;
         if (
             partido.estado === 'cerrado' &&
-            partido.fase === 'grupos' &&
             partido.goles_local !== null &&
             partido.goles_visitante !== null &&
             (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia')
@@ -598,10 +597,9 @@ router.post('/partidos/:id/recorregir', async (req, res) => {
             [goles_local, goles_visitante, id]
         );
 
-        // Re-ejecutar Bono Colombia con el marcador correcto
+        // Re-ejecutar Bono Colombia con el marcador correcto (aplica a todas las fases)
         let bonoColombia = null;
         const esPartidoColombia =
-            partido.fase === 'grupos' &&
             (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia');
 
         if (esPartidoColombia) {

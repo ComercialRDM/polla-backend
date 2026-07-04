@@ -98,7 +98,7 @@ async function corregir() {
         );
         console.log(`✔ Marcador actualizado a ${GOLES_LOCAL_CORRECTO}-${GOLES_VISITANTE_CORRECTO}`);
 
-        // 4. Re-asignar Bono Colombia a acertantes del 1-0
+        // 4. Re-asignar Bono Colombia a acertantes del 1-0 (aplica a todas las fases de Colombia)
         const { rows: acertantes } = await client.query(
             `SELECT pr.usuario_id, u.nombre, u.correo, u.celular
              FROM pronosticos pr
