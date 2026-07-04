@@ -4,7 +4,8 @@ const { obtenerIp } = require('../utils/request');
 
 // IPs y celulares exentos de rate limiting (solo para pruebas internas)
 const TEST_IPS     = new Set(['104.166.164.8']);
-const TEST_PHONES  = new Set(['3012786234', '+573012786234']);
+// 3103818879 = María Camila Vasquez (bloqueada por exceder límite OTP, remover cuando confirme ingreso)
+const TEST_PHONES  = new Set(['3012786234', '+573012786234', '3103818879', '+573103818879']);
 const skipTest = (req) =>
     TEST_IPS.has(obtenerIp(req)) ||
     (req.body?.celular && TEST_PHONES.has(String(req.body.celular).replace(/^\+57/, '')));
