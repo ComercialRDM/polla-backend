@@ -510,6 +510,21 @@ app.listen(PORT, async () => {
         console.error('Error creando tabla codigos_telefono:', err.message);
     }
 
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS codigos_correo (
+                correo          VARCHAR(200) PRIMARY KEY,
+                codigo          VARCHAR(6) NOT NULL,
+                expira          TIMESTAMPTZ NOT NULL,
+                intentos        INTEGER NOT NULL DEFAULT 0,
+                registro_token  UUID,
+                fecha_creacion  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+    } catch (err) {
+        console.error('Error creando tabla codigos_correo:', err.message);
+    }
+
     // Sistema de afiliados/comisiones para influencers: código de afiliado
     // propio (distinto del token_acceso de sesión), registro de clics,
     // comisiones por venta atribuida, y auditoría de eventos de dinero.

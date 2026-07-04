@@ -136,6 +136,18 @@ const clicLimiter = rateLimit({
     message: { success: false, error: 'Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.' },
 });
 
+// Límite por dirección de correo para el OTP de login por email: evita que
+// alguien bombardee la bandeja de entrada de otra persona con códigos repetidos.
+const correoOtpLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    skip: skipTest,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiados códigos solicitados. Espera una hora e inténtalo de nuevo.' },
+    keyGenerator: (req) => (req.body?.correo ? `correo_otp:${String(req.body.correo).toLowerCase()}` : obtenerIp(req)),
+});
+
 // Limita el landing de Colombia a 5 pronósticos por IP cada 24 horas para
 // frenar números inventados y envíos masivos desde el mismo dispositivo.
 const landingLimiter = rateLimit({
@@ -152,4 +164,4 @@ const landingLimiter = rateLimit({
     },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter, landingLimiter };
+module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter, landingLimiter, correoOtpLimiter };

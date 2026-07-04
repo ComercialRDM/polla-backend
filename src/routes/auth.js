@@ -3,10 +3,11 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const pool = require('../db');
 const { enviarMensajeManyChat } = require('../services/manychatService');
+const { enviarCorreoOTP } = require('../services/emailService');
 const { enviarCodigoTwilio, verificarCodigoTwilio } = require('../services/twilioVerifyService');
 const { enviarCorreoResetPassword } = require('../services/emailService');
 const adminAuth = require('../middleware/adminAuth');
-const { otpLimiter, resetPasswordLimiter } = require('../middleware/rateLimiters');
+const { otpLimiter, resetPasswordLimiter, correoOtpLimiter } = require('../middleware/rateLimiters');
 const { generarTokenUsuario } = require('../utils/userTokens');
 const { obtenerIp } = require('../utils/request');
 const { registrarEvento } = require('../services/auditoriaService');
@@ -188,6 +189,98 @@ router.post('/telefono/completar', async (req, res) => {
         return res.status(500).json({ success: false, error: 'Error interno' });
     } finally {
         client.release();
+    }
+});
+
+// POST /api/auth/correo/solicitar-codigo - envía código OTP al correo para login sin contraseña
+router.post('/correo/solicitar-codigo', correoOtpLimiter, async (req, res) => {
+    const correo = String(req.body.correo || '').toLowerCase().trim();
+    if (!correo || !correo.includes('@')) {
+        return res.status(400).json({ success: false, error: 'Ingresa un correo electrónico válido' });
+    }
+    const codigo = generarCodigoOTP();
+    try {
+        await pool.query(
+            `INSERT INTO codigos_correo (correo, codigo, expira, intentos)
+             VALUES ($1, $2, now() + interval '10 minutes', 0)
+             ON CONFLICT (correo) DO UPDATE SET
+                codigo = EXCLUDED.codigo, expira = EXCLUDED.expira, intentos = 0`,
+            [correo, codigo]
+        );
+        await enviarCorreoOTP({ destinatario: correo, codigo });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error en /auth/correo/solicitar-codigo:', err.message);
+        return res.status(500).json({ success: false, error: 'No se pudo enviar el código. Intenta de nuevo.' });
+    }
+});
+
+// POST /api/auth/correo/verificar-codigo - valida el OTP enviado por correo e inicia sesión
+router.post('/correo/verificar-codigo', async (req, res) => {
+    const correo = String(req.body.correo || '').toLowerCase().trim();
+    const { codigo } = req.body;
+    if (!correo || !codigo) {
+        return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+    }
+    try {
+        const { rows: otpRows } = await pool.query(
+            'SELECT * FROM codigos_correo WHERE correo = $1 FOR UPDATE',
+            [correo]
+        );
+        if (otpRows.length === 0 || new Date(otpRows[0].expira) < new Date()) {
+            return res.status(400).json({ success: false, error: 'Código vencido o no solicitado. Pide uno nuevo.' });
+        }
+        if (otpRows[0].intentos >= 5) {
+            await pool.query('DELETE FROM codigos_correo WHERE correo = $1', [correo]);
+            return res.status(429).json({ success: false, error: 'Demasiados intentos. Solicita un nuevo código.' });
+        }
+        if (otpRows[0].codigo !== String(codigo).trim()) {
+            await pool.query('UPDATE codigos_correo SET intentos = intentos + 1 WHERE correo = $1', [correo]);
+            return res.status(400).json({ success: false, error: 'Código incorrecto.' });
+        }
+        await pool.query('DELETE FROM codigos_correo WHERE correo = $1', [correo]);
+
+        const { rows: usuarioRows } = await pool.query(
+            'SELECT id, nombre, celular, correo, tipo_documento, documento, equipos_favoritos, calendario_token FROM usuarios WHERE correo = $1',
+            [correo]
+        );
+        if (usuarioRows.length > 0) {
+            await registrarEvento({
+                tabla: 'usuarios',
+                registroId: usuarioRows[0].id,
+                accion: 'login_correo',
+                actor: String(usuarioRows[0].id),
+                ip: obtenerIp(req),
+                userAgent: req.headers['user-agent'],
+            });
+            const tokenUsuario = generarTokenUsuario(usuarioRows[0]);
+            setCookieSesion(res, tokenUsuario);
+            const { rows: tokenRows } = await pool.query(
+                `SELECT token_acceso FROM transacciones
+                 WHERE usuario_id = $1 AND estado_pago = 'APROBADO'
+                 ORDER BY fecha_pago DESC NULLS LAST LIMIT 1`,
+                [usuarioRows[0].id]
+            );
+            return res.json({
+                success: true,
+                usuario: usuarioRows[0],
+                token: tokenUsuario,
+                token_acceso: tokenRows[0]?.token_acceso || null,
+            });
+        }
+
+        const registroToken = crypto.randomUUID();
+        await pool.query(
+            `INSERT INTO codigos_correo (correo, codigo, expira, intentos, registro_token)
+             VALUES ($1, '', now() + interval '10 minutes', 0, $2)
+             ON CONFLICT (correo) DO UPDATE SET
+                expira = EXCLUDED.expira, registro_token = EXCLUDED.registro_token`,
+            [correo, registroToken]
+        );
+        return res.json({ success: true, nuevo: true, registro_token: registroToken, correo });
+    } catch (err) {
+        console.error('Error en /auth/correo/verificar-codigo:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
 

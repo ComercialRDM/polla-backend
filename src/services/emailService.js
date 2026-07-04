@@ -336,4 +336,31 @@ async function enviarCorreoChecklist({ tipo, fecha, contenido, usuario }) {
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist };
+/**
+ * Envía un código OTP de 6 dígitos al correo del usuario para login sin contraseña.
+ */
+async function enviarCorreoOTP({ destinatario, codigo }) {
+    const transporter = crearTransporter();
+
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #FCD116;">🔐 Tu código de ingreso</h1>
+        <p>Usa este código para ingresar a la <strong>Polla Mundialista de La Retoucherie</strong>:</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <span style="font-size: 40px; font-weight: bold; letter-spacing: 12px; color: #18181b; background: #FCD116; padding: 16px 32px; border-radius: 12px;">
+                ${codigo}
+            </span>
+        </div>
+        <p>Este código vence en <strong>10 minutos</strong>. Si no solicitaste este código, ignora este correo.</p>
+        <p style="font-size: 12px; color: #71717a; margin-top: 24px;">La Retoucherie de Manuela · GanaConRetoucherie</p>
+    </div>`;
+
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `${codigo} — Tu código de ingreso · La Retoucherie`,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
