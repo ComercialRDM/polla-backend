@@ -1542,6 +1542,7 @@ router.get('/actividad-reciente', async (req, res) => {
              FROM transacciones t
              JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.estado_pago = 'APROBADO'
+               AND t.saldo_bono > 0
                AND NOT COALESCE(t.es_test, FALSE)
                AND NOT COALESCE(u.es_test, FALSE)
                AND u.nombre IS NOT NULL

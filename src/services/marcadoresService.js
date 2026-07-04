@@ -13,11 +13,30 @@ const INTERVALO_MS = 30 * 1000;
  * Consulta football-data.org y actualiza el marcador y estado de los
  * partidos activos cuya hora de inicio ya llegó.
  */
+// Cierra partidos cuya hora de inicio fue hace más de 3 horas y siguen 'activo'
+// (cubre el caso en que el nombre del equipo no coincide con football-data.org).
+async function cerrarPartidosVencidos() {
+    const { rowCount } = await pool.query(
+        `UPDATE partidos SET estado = 'cerrado'
+         WHERE estado = 'activo' AND fecha_hora_inicio + interval '3 hours' <= now()`
+    );
+    if (rowCount > 0) {
+        invalidate('partidos:lista');
+        console.warn(`Auto-cierre de seguridad: ${rowCount} partido(s) cerrado(s) por vencimiento. Revisar scores en el admin.`);
+    }
+}
+
 async function actualizarMarcadores() {
+    // Primero intentar actualizar via API (obtiene scores reales)
     const { rows: partidos } = await pool.query(
         `SELECT * FROM partidos WHERE estado = 'activo' AND fecha_hora_inicio <= now()`
     );
-    if (partidos.length === 0) return;
+
+    if (partidos.length === 0) {
+        // Sin partidos activos pendientes, igual correr el safety check
+        await cerrarPartidosVencidos();
+        return;
+    }
 
     const partidosApi = await obtenerPartidosMundial();
 
@@ -75,6 +94,10 @@ async function actualizarMarcadores() {
             }).catch((err) => console.error('Error enviando correos de resultado de partido:', err.message));
         }
     }
+
+    // Safety fallback: cerrar cualquier partido que siga 'activo' > 3h después
+    // de su inicio (nombre sin match en la API). Admin puede corregir scores.
+    await cerrarPartidosVencidos();
 }
 
 // Si football-data.org responde 429, se pausa el monitoreo este tiempo antes de reintentar
