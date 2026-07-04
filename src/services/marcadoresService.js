@@ -4,15 +4,20 @@ const { coincideEquipo } = require('./equiposMap');
 const { enviarCorreosResultadoPartido } = require('./notificacionesService');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
+const { verificarResultadoMultiFuente, registrarVerificacion } = require('./verificacionResultados');
 
 // football-data.org (plan gratuito) permite 10 solicitudes por minuto.
 // 30s = 2 solicitudes/minuto, más estable y menor tasa de errores de red.
 const INTERVALO_MS = 30 * 1000;
 
-/**
- * Consulta football-data.org y actualiza el marcador y estado de los
- * partidos activos cuya hora de inicio ya llegó.
- */
+// Número de polls consecutivos con el mismo marcador FINISHED antes de cerrar.
+// 2 polls × 30s = 60 segundos mínimo de estabilidad antes del cierre definitivo.
+const MIN_POLLS_ESTABLES = 2;
+
+// Tracker en memoria: partido_id -> { local, visitante, polls }
+// Se resetea si el marcador cambia o si el proceso se reinicia.
+const scoreEstable = new Map();
+
 // Cierra partidos cuya hora de inicio fue hace más de 3 horas y siguen 'activo'
 // (cubre el caso en que el nombre del equipo no coincide con football-data.org).
 async function cerrarPartidosVencidos() {
@@ -27,13 +32,11 @@ async function cerrarPartidosVencidos() {
 }
 
 async function actualizarMarcadores() {
-    // Primero intentar actualizar via API (obtiene scores reales)
     const { rows: partidos } = await pool.query(
         `SELECT * FROM partidos WHERE estado = 'activo' AND fecha_hora_inicio <= now()`
     );
 
     if (partidos.length === 0) {
-        // Sin partidos activos pendientes, igual correr el safety check
         await cerrarPartidosVencidos();
         return;
     }
@@ -41,8 +44,6 @@ async function actualizarMarcadores() {
     const partidosApi = await obtenerPartidosMundial();
 
     for (const partido of partidos) {
-        // El orden local/visitante de nuestra BD puede no coincidir con el
-        // orden home/away de football-data.org, así que se busca en ambos sentidos.
         const match = partidosApi.find((m) => {
             const mismoOrden = coincideEquipo(partido.equipo_local, m.homeTeam?.name)
                 && coincideEquipo(partido.equipo_visitante, m.awayTeam?.name);
@@ -62,28 +63,88 @@ async function actualizarMarcadores() {
         const golesLocal = localEsHome ? golesHome : golesAway;
         const golesVisitante = localEsHome ? golesAway : golesHome;
         const finalizado = match.status === 'FINISHED' || match.status === 'AWARDED';
-        const nuevoEstado = finalizado ? 'cerrado' : 'activo';
 
         const marcadorCambio = golesLocal !== partido.goles_local || golesVisitante !== partido.goles_visitante;
-        const estadoCambio = nuevoEstado !== partido.estado;
 
-        if (!marcadorCambio && !estadoCambio) continue;
+        if (finalizado) {
+            // ── Estabilidad: exigir el mismo marcador FINISHED por MIN_POLLS_ESTABLES polls ──
+            const key = partido.id;
+            const prev = scoreEstable.get(key);
+            const mismoMarcador = prev && prev.local === golesLocal && prev.visitante === golesVisitante;
 
-        await pool.query(
-            'UPDATE partidos SET goles_local = $1, goles_visitante = $2, estado = $3 WHERE id = $4',
-            [golesLocal, golesVisitante, nuevoEstado, partido.id]
-        );
-        console.log(`Marcador actualizado: ${partido.equipo_local} ${golesLocal} - ${golesVisitante} ${partido.equipo_visitante} (${nuevoEstado})`);
+            if (mismoMarcador) {
+                prev.polls++;
+            } else {
+                // Primer poll o marcador cambió — reiniciar contador
+                scoreEstable.set(key, { local: golesLocal, visitante: golesVisitante, polls: 1 });
+                // Actualizar marcador en DB aunque aún no sea el momento de cerrar
+                if (marcadorCambio) {
+                    await pool.query(
+                        'UPDATE partidos SET goles_local = $1, goles_visitante = $2 WHERE id = $3',
+                        [golesLocal, golesVisitante, partido.id]
+                    );
+                    invalidate('partidos:lista');
+                    invalidate(`ranking:${partido.id}`);
+                    notificar(partido.id);
+                    console.log(`Marcador actualizado (pendiente cierre): ${partido.equipo_local} ${golesLocal}-${golesVisitante} ${partido.equipo_visitante} [poll 1/${MIN_POLLS_ESTABLES}]`);
+                }
+                continue; // Esperar más polls para confirmar
+            }
 
-        invalidate('partidos:lista');
-        invalidate(`ranking:${partido.id}`);
-        invalidate(`resumen:${partido.id}`);
-        notificar(partido.id);
+            if (prev.polls < MIN_POLLS_ESTABLES) {
+                console.log(`Marcador estable [poll ${prev.polls}/${MIN_POLLS_ESTABLES}]: ${partido.equipo_local} ${golesLocal}-${golesVisitante} ${partido.equipo_visitante}`);
+                continue; // Aún no es suficiente — esperar
+            }
 
-        // Correo de "resultado del partido + recompra" solo al CERRAR el partido
-        // (ya no se notifica cada gol por WhatsApp — el marcador en vivo ya se ve
-        // gratis en el dashboard vía SSE, ver notificar() arriba).
-        if (nuevoEstado === 'cerrado' && estadoCambio) {
+            // ── Verificación multi-fuente (TheSportsDB + ESPN) ──
+            const verificacion = await verificarResultadoMultiFuente(partido, golesLocal, golesVisitante);
+
+            if (verificacion.alertar) {
+                // Al menos una fuente reporta un marcador diferente — NO cerrar automáticamente
+                console.error(
+                    `[VERIFICACION_ALERTA] ${partido.equipo_local} vs ${partido.equipo_visitante}: ` +
+                    `football-data.org dice ${golesLocal}-${golesVisitante} pero otra fuente discrepa. ` +
+                    `Fuentes: ${JSON.stringify(verificacion.fuentes)}. ` +
+                    `Revisar en panel admin y corregir manualmente con /api/admin/partidos/${partido.id}/recorregir`
+                );
+                await registrarVerificacion({
+                    partido_id: partido.id,
+                    goles_local: golesLocal,
+                    goles_visitante: golesVisitante,
+                    fuentes: verificacion.fuentes,
+                    consenso: false,
+                    alertar: true,
+                    accion: 'auto_discrepancia',
+                });
+                // Limpiar tracker para que el próximo ciclo reintente la verificación
+                scoreEstable.delete(key);
+                continue;
+            }
+
+            // ── Consenso logrado — cerrar el partido ──
+            scoreEstable.delete(key);
+
+            await pool.query(
+                'UPDATE partidos SET goles_local = $1, goles_visitante = $2, estado = $3 WHERE id = $4',
+                [golesLocal, golesVisitante, 'cerrado', partido.id]
+            );
+            console.log(`Partido cerrado (consenso ${verificacion.fuentes.length} fuente(s)): ${partido.equipo_local} ${golesLocal}-${golesVisitante} ${partido.equipo_visitante}`);
+
+            await registrarVerificacion({
+                partido_id: partido.id,
+                goles_local: golesLocal,
+                goles_visitante: golesVisitante,
+                fuentes: verificacion.fuentes,
+                consenso: true,
+                alertar: false,
+                accion: 'auto_cerrado',
+            });
+
+            invalidate('partidos:lista');
+            invalidate(`ranking:${partido.id}`);
+            invalidate(`resumen:${partido.id}`);
+            notificar(partido.id);
+
             enviarCorreosResultadoPartido({
                 id: partido.id,
                 equipo_local: partido.equipo_local,
@@ -91,23 +152,33 @@ async function actualizarMarcadores() {
                 fase: partido.fase,
                 goles_local: golesLocal,
                 goles_visitante: golesVisitante,
-            }).catch((err) => console.error('Error enviando correos de resultado de partido:', err.message));
+            }).catch((err) => console.error('Error enviando correos de resultado:', err.message));
+
+            continue;
         }
+
+        // Partido todavía en curso — actualizar marcador si cambió
+        if (!marcadorCambio) continue;
+
+        await pool.query(
+            'UPDATE partidos SET goles_local = $1, goles_visitante = $2, estado = $3 WHERE id = $4',
+            [golesLocal, golesVisitante, 'activo', partido.id]
+        );
+        console.log(`Marcador en vivo: ${partido.equipo_local} ${golesLocal}-${golesVisitante} ${partido.equipo_visitante} (activo)`);
+
+        invalidate('partidos:lista');
+        invalidate(`ranking:${partido.id}`);
+        invalidate(`resumen:${partido.id}`);
+        notificar(partido.id);
     }
 
-    // Safety fallback: cerrar cualquier partido que siga 'activo' > 3h después
-    // de su inicio (nombre sin match en la API). Admin puede corregir scores.
+    // Safety fallback: cerrar cualquier partido 'activo' > 3h después de su inicio
     await cerrarPartidosVencidos();
 }
 
-// Si football-data.org responde 429, se pausa el monitoreo este tiempo antes de reintentar
 const PAUSA_TRAS_429_MS = 60 * 1000;
-
 let pausadoHasta = 0;
 
-/**
- * Inicia el monitoreo periódico de marcadores en vivo.
- */
 function iniciarMonitorMarcadores() {
     if (!process.env.FOOTBALL_DATA_TOKEN) {
         console.warn('FOOTBALL_DATA_TOKEN no configurado, los marcadores no se actualizarán automáticamente');
@@ -129,7 +200,7 @@ function iniciarMonitorMarcadores() {
                 return;
             }
             if (err.response?.status >= 500) {
-                console.warn(`actualizarMarcadores: error transitorio HTTP ${err.response.status} de football-data.org, reintentará en ${INTERVALO_MS / 1000}s`);
+                console.warn(`actualizarMarcadores: error transitorio HTTP ${err.response.status} de football-data.org, reintentará`);
                 return;
             }
             console.error('Error en actualizarMarcadores:', err.response?.status ?? err.code, err.message);

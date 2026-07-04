@@ -18,6 +18,7 @@ const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } =
 const { enviarCorreosResultadoPartido } = require('../services/notificacionesService');
 const { normalizarCelular } = require('../utils/celular');
 const { PUNTAJES_FASE, casePuntajeSQL } = require('../config/puntajesFase');
+const { registrarVerificacion } = require('../services/verificacionResultados');
 
 const router = express.Router();
 
@@ -529,6 +530,148 @@ router.patch('/partidos/:id', async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error en /admin/partidos PATCH:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/admin/partidos/:id/recorregir
+// Corrige el resultado de un partido ya cerrado con marcador incorrecto.
+// - Elimina bonos_colombia incorrectos (solo los no reclamados; advierte sobre los reclamados)
+// - Actualiza el marcador
+// - Re-ejecuta la lógica del Bono Colombia con el resultado correcto
+// - Registra auditoría con las fuentes citadas por el admin
+router.post('/partidos/:id/recorregir', async (req, res) => {
+    const { id } = req.params;
+    const { goles_local, goles_visitante, fuentes = [] } = req.body;
+    const adminId = req.admin.id;
+
+    if (goles_local === undefined || goles_visitante === undefined) {
+        return res.status(400).json({ success: false, error: 'Faltan goles_local y goles_visitante' });
+    }
+    if (!Array.isArray(fuentes) || fuentes.length < 1) {
+        return res.status(400).json({ success: false, error: 'Debes citar al menos 1 fuente de verificación (campo fuentes: [{fuente, valor}])' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const { rows: pRows } = await client.query(
+            'SELECT * FROM partidos WHERE id = $1 FOR UPDATE', [id]
+        );
+        if (pRows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+        }
+        const partido = pRows[0];
+        if (partido.estado !== 'cerrado') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'Solo se pueden corregir partidos ya cerrados. Usa PATCH para modificar partidos activos.' });
+        }
+
+        const marcadorAnterior = { goles_local: partido.goles_local, goles_visitante: partido.goles_visitante };
+
+        // Revisar bonos_colombia incorrectos (calculados con el marcador anterior)
+        const { rows: bonosIncorrectos } = await client.query(
+            `SELECT bc.id, bc.usuario_id, bc.monto_cop, bc.reclamado, u.nombre, u.correo
+             FROM bonos_colombia bc
+             JOIN usuarios u ON u.id = bc.usuario_id
+             WHERE bc.partido_id = $1`,
+            [id]
+        );
+        const bonosReclamados = bonosIncorrectos.filter((b) => b.reclamado);
+        const bonosNoReclamados = bonosIncorrectos.filter((b) => !b.reclamado);
+
+        // Solo eliminamos los no reclamados (los reclamados requieren gestión manual)
+        if (bonosNoReclamados.length > 0) {
+            await client.query(
+                `DELETE FROM bonos_colombia WHERE partido_id = $1 AND reclamado = FALSE`,
+                [id]
+            );
+        }
+
+        // Actualizar el marcador
+        await client.query(
+            'UPDATE partidos SET goles_local = $1, goles_visitante = $2 WHERE id = $3',
+            [goles_local, goles_visitante, id]
+        );
+
+        // Re-ejecutar Bono Colombia con el marcador correcto
+        let bonoColombia = null;
+        const esPartidoColombia =
+            partido.fase === 'grupos' &&
+            (partido.equipo_local.toLowerCase() === 'colombia' || partido.equipo_visitante.toLowerCase() === 'colombia');
+
+        if (esPartidoColombia) {
+            const { rows: exactos } = await client.query(
+                `SELECT pr.usuario_id, u.nombre, u.correo, u.celular
+                 FROM pronosticos pr
+                 JOIN usuarios u ON u.id = pr.usuario_id
+                 LEFT JOIN transacciones t ON t.id = pr.transaccion_id
+                 WHERE pr.partido_id = $1
+                   AND pr.goles_local = $2
+                   AND pr.goles_visitante = $3
+                   AND COALESCE(t.es_test, FALSE) = FALSE
+                   AND COALESCE(t.es_especial, FALSE) = FALSE`,
+                [id, goles_local, goles_visitante]
+            );
+
+            if (exactos.length > 0) {
+                const sorteoRealizado = exactos.length > 10;
+                const ganadores = sorteoRealizado ? shuffleSeguro(exactos).slice(0, 10) : exactos;
+                const montoPorGanador = sorteoRealizado ? 100000 : Math.floor(1000000 / exactos.length);
+                for (const g of ganadores) {
+                    await client.query(
+                        `INSERT INTO bonos_colombia (partido_id, usuario_id, monto_cop)
+                         VALUES ($1, $2, $3) ON CONFLICT (partido_id, usuario_id) DO NOTHING`,
+                        [id, g.usuario_id, montoPorGanador]
+                    );
+                }
+                bonoColombia = {
+                    ganadores: ganadores.map((g) => ({ nombre: g.nombre, celular: g.celular })),
+                    montoPorGanador,
+                    totalAcertantes: exactos.length,
+                };
+            } else {
+                bonoColombia = { ganadores: [], desierto: true };
+            }
+        }
+
+        await client.query('COMMIT');
+
+        invalidate('partidos:lista');
+        invalidate(`ranking:${id}`);
+        invalidate(`resumen:${id}`);
+
+        // Auditoría
+        const fuentesAuditoria = [
+            { fuente: 'admin', admin_id: adminId, goles_local, goles_visitante },
+            ...fuentes.map((f) => ({ fuente: f.fuente || f, goles_local: f.goles_local ?? goles_local, goles_visitante: f.goles_visitante ?? goles_visitante, url: f.url })),
+        ];
+        await registrarVerificacion({
+            partido_id: Number(id),
+            goles_local,
+            goles_visitante,
+            fuentes: fuentesAuditoria,
+            consenso: true,
+            alertar: false,
+            accion: 'admin_corregido',
+            admin_id: adminId,
+        });
+
+        return res.json({
+            success: true,
+            marcadorAnterior,
+            marcadorNuevo: { goles_local, goles_visitante },
+            bonosEliminados: bonosNoReclamados.length,
+            bonosReclamadosNoCambiados: bonosReclamados.map((b) => ({ nombre: b.nombre, correo: b.correo, monto: b.monto_cop })),
+            bonoColombia,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en /admin/partidos/:id/recorregir:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });
     } finally {
         client.release();

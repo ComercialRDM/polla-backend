@@ -827,6 +827,14 @@ app.listen(PORT, async () => {
         console.error('Error creando tabla influencers_preseleccionados:', err.message);
     }
 
+    // Tabla de auditoría de resultados — verifica multi-fuente antes de cerrar partidos
+    try {
+        const { crearTablaAuditoria } = require('./services/verificacionResultados');
+        await crearTablaAuditoria();
+    } catch (err) {
+        console.error('Error creando tabla resultado_verificacion:', err.message);
+    }
+
     iniciarMonitorMarcadores();
     iniciarSincronizacionMundial();
 });
