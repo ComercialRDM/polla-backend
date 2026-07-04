@@ -1672,6 +1672,43 @@ router.get('/bonos-colombia', async (req, res) => {
     }
 });
 
+// GET /api/admin/pronosticos-landing - lista de pronósticos capturados por el landing de Colombia
+router.get('/pronosticos-landing', async (req, res) => {
+    const { partido_id, busqueda } = req.query;
+    try {
+        const conditions = ["t.metodo = 'Landing'"];
+        const params = [];
+        if (partido_id) {
+            params.push(partido_id);
+            conditions.push(`pr.partido_id = $${params.length}`);
+        }
+        if (busqueda) {
+            params.push(`%${busqueda}%`);
+            const idx = params.length;
+            conditions.push(`(u.nombre ILIKE $${idx} OR u.celular ILIKE $${idx})`);
+        }
+        const where = `WHERE ${conditions.join(' AND ')}`;
+        const { rows } = await pool.query(`
+            SELECT u.id AS usuario_id, u.nombre, u.celular,
+                   pr.goles_local, pr.goles_visitante, pr.puntos_obtenidos,
+                   pa.id AS partido_id, pa.equipo_local, pa.equipo_visitante,
+                   pa.estado, pa.goles_local AS resultado_local, pa.goles_visitante AS resultado_visitante,
+                   pr.created_at
+            FROM pronosticos pr
+            JOIN transacciones t ON t.id = pr.transaccion_id
+            JOIN usuarios u ON u.id = pr.usuario_id
+            JOIN partidos pa ON pa.id = pr.partido_id
+            ${where}
+            ORDER BY pr.created_at DESC
+            LIMIT 500
+        `, params);
+        return res.json({ success: true, pronosticos: rows, total: rows.length });
+    } catch (err) {
+        console.error('Error en GET /admin/pronosticos-landing:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // PATCH /api/admin/bonos-colombia/:id - marcar como reclamado
 router.patch('/bonos-colombia/:id', async (req, res) => {
     const { id } = req.params;
