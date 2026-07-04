@@ -102,7 +102,7 @@ router.post('/telefono/verificar-codigo', async (req, res) => {
             const { rows: tokenRows } = await pool.query(
                 `SELECT token_acceso FROM transacciones
                  WHERE usuario_id = $1 AND estado_pago = 'APROBADO'
-                 ORDER BY fecha_pago DESC NULLS LAST LIMIT 1`,
+                 ORDER BY id DESC LIMIT 1`,
                 [usuarioRows[0].id]
             );
             return res.json({
@@ -258,7 +258,7 @@ router.post('/correo/verificar-codigo', async (req, res) => {
             const { rows: tokenRows } = await pool.query(
                 `SELECT token_acceso FROM transacciones
                  WHERE usuario_id = $1 AND estado_pago = 'APROBADO'
-                 ORDER BY fecha_pago DESC NULLS LAST LIMIT 1`,
+                 ORDER BY id DESC LIMIT 1`,
                 [usuarioRows[0].id]
             );
             return res.json({
