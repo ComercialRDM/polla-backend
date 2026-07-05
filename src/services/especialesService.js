@@ -5,6 +5,7 @@ const { enviarBonoManyChat, enviarMensajeManyChat, enviarBonoPorPlantilla } = re
 const { obtenerOcrearInfluencer } = require('./referidosService');
 const { normalizarCelular } = require('../utils/celular');
 const { registrarBonoEspecialEnSheets } = require('./sheetsService');
+const { casePuntajeSQL } = require('../config/puntajesFase');
 
 const VALOR_BONO_ESPECIAL_DEFAULT = 500000;
 const INTENTOS_ESPECIAL_DEFAULT = 30;
@@ -266,50 +267,48 @@ async function reenviarBonoWhatsApp(transaccionId) {
 
 /**
  * Ranking SOLO entre cuentas de Bono Especial (influenciadores/creadores de
- * contenido), con la misma fórmula de puntaje que el ranking global. Lo usa
- * tanto el panel admin (GET /api/admin/ranking-especiales) como el ranking
- * que ve cada influencer en su propio link (GET /api/polla/ranking-influencers).
+ * contenido). Puntaje = predicciones + referidos_que_compraron × 200.
+ * Lo usa el panel admin (GET /api/admin/ranking-especiales) y el ranking
+ * que ve cada influencer (GET /api/polla/ranking-influencers).
  */
 async function obtenerRankingEspeciales() {
-    const { rows } = await pool.query(
-        `SELECT u.id, u.nombre, u.celular, (u.foto_imagen IS NOT NULL) AS tiene_foto,
-                COALESCE(SUM(
-                    CASE
-                        WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
-                             AND pa.goles_local IS NOT NULL
-                        THEN CASE pa.fase
-                            WHEN 'grupos'        THEN 100
-                            WHEN 'dieciseisavos' THEN 200
-                            WHEN 'octavos'       THEN 200
-                            WHEN 'cuartos'       THEN 600
-                            WHEN 'semifinal'     THEN 600
-                            WHEN 'final'         THEN 1000
-                            ELSE 100 END
-                        WHEN pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL
-                             AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante)
-                             AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)
-                        THEN CASE pa.fase
-                            WHEN 'grupos'        THEN 50
-                            WHEN 'dieciseisavos' THEN 100
-                            WHEN 'octavos'       THEN 100
-                            WHEN 'cuartos'       THEN 300
-                            WHEN 'semifinal'     THEN 300
-                            WHEN 'final'         THEN 500
-                            ELSE 50 END
-                        ELSE 0
-                    END
-                ), 0) AS puntos_total,
-                COUNT(
-                    CASE WHEN pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante
-                              AND pa.goles_local IS NOT NULL THEN 1 END
-                ) AS exactos
-         FROM usuarios u
-         LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
-         LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
-         WHERE u.id IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
-         GROUP BY u.id, u.nombre, u.celular, u.foto_imagen
-         ORDER BY puntos_total DESC, exactos DESC`
+    const puntajeSql = casePuntajeSQL(
+        'pa.fase',
+        "pa.estado = 'cerrado' AND pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante",
+        "pa.estado = 'cerrado' AND pr.goles_local IS NOT NULL AND pa.goles_local IS NOT NULL AND SIGN(pr.goles_local - pr.goles_visitante) = SIGN(pa.goles_local - pa.goles_visitante) AND NOT (pr.goles_local = pa.goles_local AND pr.goles_visitante = pa.goles_visitante)"
     );
+
+    const { rows } = await pool.query(`
+        WITH creadores AS (
+            SELECT u.id, u.nombre, u.celular,
+                   (u.foto_imagen IS NOT NULL) AS tiene_foto,
+                   COALESCE(SUM(${puntajeSql}), 0) AS puntos_predicciones,
+                   COUNT(
+                       CASE WHEN pa.estado = 'cerrado' AND pa.goles_local IS NOT NULL
+                                 AND pr.goles_local = pa.goles_local
+                                 AND pr.goles_visitante = pa.goles_visitante
+                            THEN 1 END
+                   ) AS exactos,
+                   (SELECT COUNT(*)
+                    FROM transacciones ref_t
+                    WHERE ref_t.attribution_ref_id IN (
+                        SELECT te.token_acceso FROM transacciones te
+                        WHERE te.usuario_id = u.id AND te.es_especial = TRUE
+                    )
+                    AND ref_t.estado_pago = 'APROBADO'
+                    AND (ref_t.es_especial IS NULL OR ref_t.es_especial = FALSE)
+                    AND (ref_t.es_test IS NULL OR ref_t.es_test = FALSE)
+                   ) AS referidos
+            FROM usuarios u
+            LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+            LEFT JOIN partidos pa ON pa.id = pr.partido_id AND pa.estado = 'cerrado'
+            WHERE u.id IN (SELECT usuario_id FROM transacciones WHERE es_especial = TRUE)
+            GROUP BY u.id, u.nombre, u.celular, u.foto_imagen
+        )
+        SELECT *, (puntos_predicciones + referidos * 200) AS puntos_total
+        FROM creadores
+        ORDER BY puntos_total DESC, exactos DESC
+    `);
 
     return rows.map((u, i) => ({
         posicion: i + 1,
@@ -318,6 +317,8 @@ async function obtenerRankingEspeciales() {
         celular: u.celular,
         tiene_foto: u.tiene_foto,
         puntos: Number(u.puntos_total),
+        puntos_predicciones: Number(u.puntos_predicciones),
+        referidos: Number(u.referidos),
         exactos: Number(u.exactos),
     }));
 }
