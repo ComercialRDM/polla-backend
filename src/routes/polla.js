@@ -374,6 +374,135 @@ router.get('/ranking-influencers', async (req, res) => {
     }
 });
 
+// GET /api/polla/ranking-general?token_acceso= — top 30 de clientes por puntos,
+// con la fila propia destacada aunque esté fuera del top. Solo incluye cuentas
+// reales (excluye es_especial y es_test). Accesible desde la sesión del usuario.
+router.get('/ranking-general', async (req, res) => {
+    const { token_acceso } = req.query;
+    if (!token_acceso) return res.status(400).json({ success: false, error: 'Falta token_acceso' });
+
+    try {
+        const { rows: sesionRows } = await pool.query(
+            `SELECT usuario_id FROM transacciones WHERE token_acceso = $1 AND estado_pago = 'APROBADO' LIMIT 1`,
+            [token_acceso]
+        );
+        if (sesionRows.length === 0) return res.status(403).json({ success: false, error: 'Token inválido' });
+
+        const usuarioId = sesionRows[0].usuario_id;
+
+        const puntajeSql = casePuntajeSQL(
+            'p.fase',
+            "p.estado = 'cerrado' AND pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante",
+            "p.estado = 'cerrado' AND ((pr.goles_local > pr.goles_visitante AND p.goles_local > p.goles_visitante) OR (pr.goles_local < pr.goles_visitante AND p.goles_local < p.goles_visitante) OR (pr.goles_local = pr.goles_visitante AND p.goles_local = p.goles_visitante)) AND NOT (pr.goles_local = p.goles_local AND pr.goles_visitante = p.goles_visitante)"
+        );
+
+        // Top 30 + fila propia si está fuera del top
+        const { rows: rankingRows } = await pool.query(`
+            WITH elegibles AS (
+                SELECT DISTINCT usuario_id
+                FROM transacciones
+                WHERE estado_pago = 'APROBADO'
+                  AND es_test = FALSE
+                  AND es_especial = FALSE
+            ),
+            pts_base AS (
+                SELECT
+                    u.id AS usuario_id,
+                    u.nombre,
+                    COALESCE(SUM(${puntajeSql}), 0) + COALESCE(u.puntos_bonus, 0) AS puntos,
+                    COUNT(CASE
+                        WHEN pr.goles_local = p.goles_local
+                             AND pr.goles_visitante = p.goles_visitante
+                             AND p.estado = 'cerrado'
+                             AND p.goles_local IS NOT NULL
+                        THEN 1 END)::int AS exactos
+                FROM usuarios u
+                LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+                LEFT JOIN partidos p ON p.id = pr.partido_id
+                WHERE u.id IN (SELECT usuario_id FROM elegibles)
+                GROUP BY u.id, u.nombre, u.puntos_bonus
+            ),
+            ranking AS (
+                SELECT *,
+                       RANK() OVER (ORDER BY puntos DESC, exactos DESC)::int AS posicion
+                FROM pts_base
+            )
+            SELECT usuario_id, nombre, puntos::int, exactos, posicion,
+                   (usuario_id = $1) AS es_yo
+            FROM ranking
+            WHERE posicion <= 30 OR usuario_id = $1
+            ORDER BY posicion
+        `, [usuarioId]);
+
+        const { rows: totalRows } = await pool.query(`
+            SELECT COUNT(DISTINCT usuario_id)::int AS total
+            FROM transacciones
+            WHERE estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE
+        `);
+
+        const miFila = rankingRows.find(r => r.es_yo);
+        let puntos_para_subir = null;
+
+        if (miFila && miFila.posicion > 1) {
+            // Buscar el puesto inmediatamente superior (mínimo de puntos que supera los propios)
+            const arriba = rankingRows.filter(r => r.posicion < miFila.posicion);
+            if (arriba.length > 0) {
+                // El usuario inmediatamente arriba tiene los puntos más bajos entre
+                // todos los que están por encima (posición más alta, puntos más bajos)
+                const puntosArriba = Math.min(...arriba.map(r => r.puntos));
+                puntos_para_subir = puntosArriba - miFila.puntos;
+            } else {
+                // Usuario fuera del top 30 y el de arriba tampoco está en el top 30:
+                // consulta adicional para obtener el mínimo de puntos por encima del usuario
+                const { rows: sigRows } = await pool.query(`
+                    WITH elegibles AS (
+                        SELECT DISTINCT usuario_id FROM transacciones
+                        WHERE estado_pago = 'APROBADO' AND es_test = FALSE AND es_especial = FALSE
+                    ),
+                    pts_base AS (
+                        SELECT u.id AS usuario_id,
+                               COALESCE(SUM(${puntajeSql}), 0) + COALESCE(u.puntos_bonus, 0) AS puntos
+                        FROM usuarios u
+                        LEFT JOIN pronosticos pr ON pr.usuario_id = u.id
+                        LEFT JOIN partidos p ON p.id = pr.partido_id
+                        WHERE u.id IN (SELECT usuario_id FROM elegibles)
+                          AND u.id != $2
+                        GROUP BY u.id, u.puntos_bonus
+                    )
+                    SELECT MIN(puntos)::int AS puntos_siguiente FROM pts_base WHERE puntos > $1
+                `, [miFila.puntos, usuarioId]);
+                const ptosSig = sigRows[0]?.puntos_siguiente;
+                if (ptosSig != null) puntos_para_subir = ptosSig - miFila.puntos;
+            }
+        }
+
+        function enmascararNombre(nombre) {
+            const partes = (nombre || '').trim().split(/\s+/);
+            const primero = partes[0] || '?';
+            const inicial = partes[1] ? `${partes[1][0]}.` : '';
+            return `${primero} ${inicial}`.trim();
+        }
+
+        return res.json({
+            success: true,
+            ranking: rankingRows.map(r => ({
+                posicion: r.posicion,
+                nombre: enmascararNombre(r.nombre),
+                puntos: r.puntos,
+                exactos: r.exactos,
+                es_yo: r.es_yo,
+            })),
+            mi_posicion: miFila?.posicion ?? null,
+            mi_puntos: miFila?.puntos ?? 0,
+            puntos_para_subir,
+            total_participantes: totalRows[0]?.total ?? 0,
+        });
+    } catch (err) {
+        console.error('Error en /polla/ranking-general:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // GET /api/polla/bonos-vendidos - contador público de bonos vendidos (compras
 // aprobadas reales, sin contar cuentas de prueba), para mostrar cupos
 // restantes frente al tope real de 3000 bonos. Cacheado 60s.
