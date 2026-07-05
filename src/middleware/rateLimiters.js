@@ -4,8 +4,7 @@ const { obtenerIp } = require('../utils/request');
 
 // IPs y celulares exentos de rate limiting (solo para pruebas internas)
 const TEST_IPS     = new Set(['104.166.164.8']);
-// 3103818879 = María Camila Vasquez (bloqueada por exceder límite OTP, remover cuando confirme ingreso)
-const TEST_PHONES  = new Set(['3012786234', '+573012786234', '3103818879', '+573103818879']);
+const TEST_PHONES  = new Set(['3012786234', '+573012786234']);
 const skipTest = (req) =>
     TEST_IPS.has(obtenerIp(req)) ||
     (req.body?.celular && TEST_PHONES.has(String(req.body.celular).replace(/^\+57/, '')));
@@ -25,13 +24,28 @@ const authLimiter = rateLimit({
     },
 });
 
-// Limita el panel de administración (clave fija) para frenar fuerza bruta
+// Limita el panel de administración para frenar fuerza bruta en rutas autenticadas
 const adminLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 50,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' },
+});
+
+// Límite estricto exclusivo para POST /api/admin/login: 10 intentos por IP
+// cada 15 minutos. Separado de adminLimiter (que protege rutas autenticadas)
+// para que un atacante no pueda probar más de 10 contraseñas sin bloquearse.
+const adminLoginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Demasiados intentos de acceso. Espera 15 minutos e inténtalo de nuevo.' },
+    handler: (req, res, next, options) => {
+        registrarEvento('ADMIN_FUERZA_BRUTA', { ip: obtenerIp(req) });
+        res.status(options.statusCode).json(options.message);
+    },
 });
 
 // Limita la creación de transacciones (endpoints públicos sin autenticación)
@@ -165,4 +179,4 @@ const landingLimiter = rateLimit({
     },
 });
 
-module.exports = { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter, landingLimiter, correoOtpLimiter };
+module.exports = { authLimiter, adminLimiter, adminLoginLimiter, transaccionesLimiter, pollaLimiter, votarLimiter, otpLimiter, webhooksLimiter, resetPasswordLimiter, influencersLimiter, clicLimiter, landingLimiter, correoOtpLimiter };

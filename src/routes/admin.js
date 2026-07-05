@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const pool = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { generarToken } = require('../utils/adminTokens');
+const { adminLoginLimiter } = require('../middleware/rateLimiters');
 const { aprobarTransaccion, rechazarTransaccion } = require('../services/aprobacionService');
 const { enviarCorreoRecompra, enviarCorreoBonoColWinner } = require('../services/emailService');
 const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../services/testService');
@@ -34,7 +35,7 @@ function shuffleSeguro(arr) {
 }
 
 // POST /api/admin/login - autenticación con usuario + contraseña [+ TOTP si 2FA activo]
-router.post('/login', async (req, res) => {
+router.post('/login', adminLoginLimiter, async (req, res) => {
     const { usuario, password, totp_code } = req.body;
 
     if (!usuario || !password) {
@@ -163,28 +164,6 @@ router.post('/2fa/verificar', async (req, res) => {
     } catch (err) {
         console.error('Error en /admin/2fa/verificar:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno' });
-    }
-});
-
-// GET /api/admin/diagnostico-usuario?celular=XXXXXXXXXX - diagnóstico temporal
-router.get('/diagnostico-usuario', async (req, res) => {
-    const { celular } = req.query;
-    if (!celular) return res.status(400).json({ error: 'Falta celular' });
-    try {
-        const { rows: usuarios } = await pool.query(
-            'SELECT id, nombre, celular, correo FROM usuarios WHERE celular = $1',
-            [celular]
-        );
-        if (!usuarios.length) return res.json({ encontrado: false, celular });
-        const usuario = usuarios[0];
-        const { rows: transacciones } = await pool.query(
-            `SELECT id, token_acceso, estado_pago, metodo, es_especial, valor_pagado, saldo_bono, fecha_creacion
-             FROM transacciones WHERE usuario_id = $1 ORDER BY id DESC`,
-            [usuario.id]
-        );
-        return res.json({ encontrado: true, usuario, transacciones });
-    } catch (err) {
-        return res.status(500).json({ error: err.message });
     }
 });
 
