@@ -23,6 +23,7 @@ const referidosRouter = require('./routes/referidos');
 const gruposRouter = require('./routes/grupos');
 const checklistRouter = require('./routes/checklist');
 const invitacionRouter = require('./routes/invitacion');
+const { adminRouter: marcasAdminRouter, publicRouter: marcasPublicRouter } = require('./routes/marcas');
 const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -99,6 +100,8 @@ app.use('/api/referidos', clicLimiter, referidosRouter);
 app.use('/api/grupo', pollaLimiter, gruposRouter);
 app.use('/api/admin/checklist', adminLimiter, checklistRouter);
 app.use('/api/invitacion', pollaLimiter, invitacionRouter);
+app.use('/api/admin/marcas', adminLimiter, marcasAdminRouter);
+app.use('/api/marcas', pollaLimiter, marcasPublicRouter);
 
 // Reporta a Sentry los errores no controlados que lleguen hasta aquí
 if (process.env.SENTRY_DSN) {
