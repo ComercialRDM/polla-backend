@@ -33,7 +33,8 @@
     "sharp": "^0.35.1",
     "speakeasy": "^2.0.0",
     "twilio": "^6.0.2",
-    "uuid": "^11.0.4"
+    "uuid": "^11.0.4",
+    "ioredis": "^5.4.2"
   },
   "devDependencies": {
     "embedded-postgres": "^18.4.0-beta.17",
