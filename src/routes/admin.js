@@ -1967,7 +1967,10 @@ router.get('/usuarios', async (req, res) => {
                 u.fecha_registro,
                 COUNT(t.id) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE) AS compras_aprobadas,
                 COALESCE(SUM(t.valor_pagado) FILTER (WHERE t.estado_pago = 'APROBADO' AND t.es_test = FALSE), 0) AS total_pagado,
-                MAX(t.fecha_creacion) FILTER (WHERE t.es_test = FALSE) AS ultima_transaccion
+                MAX(t.fecha_creacion) FILTER (WHERE t.es_test = FALSE) AS ultima_transaccion,
+                (SELECT t2.token_acceso FROM transacciones t2
+                 WHERE t2.usuario_id = u.id AND t2.estado_pago = 'APROBADO' AND t2.es_test = FALSE
+                 ORDER BY t2.fecha_creacion DESC LIMIT 1) AS token_acceso
              FROM usuarios u
              LEFT JOIN transacciones t ON t.usuario_id = u.id
              GROUP BY u.id
