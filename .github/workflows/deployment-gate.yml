@@ -61,7 +61,7 @@ jobs:
           password: ${{ secrets.SMTP_PASS }}
           subject: "🚨 ALERTA ROJA — Deploy bloqueado fuera de horario | polla-backend"
           to: ${{ secrets.ALERT_EMAIL }}
-          from: "Seguridad Polla <${{ secrets.SMTP_USER }}>"
+          from: ${{ secrets.MAIL_FROM }}
           html_body: |
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <div style="background: #dc2626; color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
