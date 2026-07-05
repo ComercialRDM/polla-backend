@@ -1,0 +1,92 @@
+name: 🔒 Deployment Gate — Horario Colombia
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  verificar-horario:
+    name: Verificar horario Colombia
+    runs-on: ubuntu-latest
+    outputs:
+      permitido: ${{ steps.check.outputs.permitido }}
+      hora_colombia: ${{ steps.check.outputs.hora_colombia }}
+    steps:
+      - name: Verificar hora (7am–9pm Colombia, UTC-5)
+        id: check
+        run: |
+          HORA_COLOMBIA=$(TZ="America/Bogota" date '+%H:%M:%S %Z %Y-%m-%d')
+          HORA=$(TZ="America/Bogota" date +%H)
+          MINUTO=$(TZ="America/Bogota" date +%M)
+          TOTAL_MIN=$(( 10#$HORA * 60 + 10#$MINUTO ))
+          INICIO=$(( 7 * 60 ))    # 7:00 AM = 420 min
+          FIN=$(( 21 * 60 ))      # 9:00 PM = 1260 min
+
+          echo "hora_colombia=$HORA_COLOMBIA" >> $GITHUB_OUTPUT
+          echo "Hora Colombia: $HORA_COLOMBIA"
+          echo "Minutos desde medianoche: $TOTAL_MIN (ventana: $INICIO-$FIN)"
+
+          if [ $TOTAL_MIN -ge $INICIO ] && [ $TOTAL_MIN -lt $FIN ]; then
+            echo "permitido=true" >> $GITHUB_OUTPUT
+            echo "✅ Dentro del horario permitido (7am-9pm)"
+          else
+            echo "permitido=false" >> $GITHUB_OUTPUT
+            echo "🚨 FUERA del horario — deploy bloqueado"
+          fi
+
+  deploy:
+    name: Deploy → Render
+    needs: verificar-horario
+    if: needs.verificar-horario.outputs.permitido == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Triggear deploy en Render
+        run: |
+          curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+          echo "✅ Deploy enviado a Render"
+
+  alerta-bloqueado:
+    name: 🚨 Alerta deploy bloqueado
+    needs: verificar-horario
+    if: needs.verificar-horario.outputs.permitido == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enviar alerta roja por email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          secure: false
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "🚨 ALERTA ROJA — Deploy bloqueado fuera de horario | polla-backend"
+          to: ${{ secrets.ALERT_EMAIL }}
+          from: "Seguridad Polla <${{ secrets.SMTP_USER }}>"
+          html_body: |
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background: #dc2626; color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+                <h1 style="margin: 0; font-size: 24px;">🚨 ALERTA ROJA</h1>
+                <p style="margin: 8px 0 0 0;">Deploy bloqueado fuera de horario — polla-backend</p>
+              </div>
+              <div style="background: #fef2f2; padding: 24px; border: 2px solid #dc2626; border-top: none; border-radius: 0 0 8px 8px;">
+                <table style="width: 100%; border-collapse: collapse;">
+                  <tr><td style="padding: 8px 0; color: #71717a; width: 130px;">Repositorio</td><td style="padding: 8px 0; font-weight: bold;">ComercialRDM/polla-backend</td></tr>
+                  <tr><td style="padding: 8px 0; color: #71717a;">Usuario GitHub</td><td style="padding: 8px 0; font-weight: bold; color: #dc2626;">${{ github.actor }}</td></tr>
+                  <tr><td style="padding: 8px 0; color: #71717a;">Hora del intento</td><td style="padding: 8px 0; font-weight: bold;">${{ needs.verificar-horario.outputs.hora_colombia }}</td></tr>
+                  <tr><td style="padding: 8px 0; color: #71717a;">Rama</td><td style="padding: 8px 0;">${{ github.ref_name }}</td></tr>
+                  <tr><td style="padding: 8px 0; color: #71717a;">Commit SHA</td><td style="padding: 8px 0; font-family: monospace; font-size: 12px;">${{ github.sha }}</td></tr>
+                  <tr><td style="padding: 8px 0; color: #71717a;">Mensaje commit</td><td style="padding: 8px 0; font-style: italic;">${{ github.event.head_commit.message }}</td></tr>
+                </table>
+                <div style="margin-top: 20px; padding: 16px; background: #fee2e2; border-radius: 8px;">
+                  <p style="margin: 0; color: #991b1b; font-weight: bold;">⚠️ El deploy fue bloqueado automáticamente. Horario permitido: 7:00 AM – 9:00 PM hora Colombia (UTC-5), todos los días.</p>
+                </div>
+                <p style="margin-top: 20px; text-align: center;">
+                  <a href="https://github.com/ComercialRDM/polla-backend/actions" style="background: #dc2626; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Ver en GitHub Actions →</a>
+                </p>
+              </div>
+            </div>
+
+      - name: Fallar el workflow
+        run: |
+          echo "🚨 Deploy rechazado — fuera del horario permitido (7am-9pm Colombia)"
+          exit 1
