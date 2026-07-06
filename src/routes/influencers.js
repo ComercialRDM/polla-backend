@@ -50,11 +50,16 @@ router.post('/registrar', upload.single('foto'), async (req, res) => {
     }
 
     try {
-        const { rows } = await pool.query(
+        const { rows, rowCount } = await pool.query(
             `INSERT INTO influencer_registros (nombre, correo, celular, red_contenido, foto_imagen, foto_mime, autoriza_foto)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (correo) DO NOTHING
+             RETURNING id`,
             [nombre, correo, celular, red_contenido, req.file?.buffer || null, req.file?.mimetype || null, autorizaFoto]
         );
+        if (rowCount === 0) {
+            return res.json({ success: true, ya_registrado: true });
+        }
         return res.json({ success: true, id: rows[0].id });
     } catch (err) {
         console.error('Error en /influencers/registrar:', err);

@@ -2,6 +2,7 @@ const pool = require('../db');
 const { obtenerPartidosMundial } = require('./footballDataService');
 const { nombreEspanol } = require('./equiposMap');
 const { invalidate } = require('../utils/cache');
+const { verificarFechaPartido } = require('./verificacionCalendario');
 
 // football-data.org (plan gratuito) permite 10 solicitudes por minuto. El
 // calendario/llaves del Mundial casi nunca cambia, así que no hace falta
@@ -46,6 +47,19 @@ async function sincronizarPartidosMundial() {
 
         const equipoLocal = nombreEspanol(m.homeTeam.name);
         const equipoVisitante = nombreEspanol(m.awayTeam.name);
+
+        // Verificación multi-fuente de la fecha/hora antes de guardar.
+        // Solo se lanza para partidos de fases eliminatorias (octavos en adelante)
+        // porque son los que más impacto tienen. Si hay discrepancia no se bloquea
+        // el INSERT pero queda registrado en el log para revisión manual.
+        const esEliminatoria = ['octavos', 'cuartos', 'semifinal', 'final'].includes(fase);
+        if (esEliminatoria) {
+            try {
+                await verificarFechaPartido(equipoLocal, equipoVisitante, m.utcDate);
+            } catch (err) {
+                console.warn(`[sincronizacion] Error en verificación de calendario para ${equipoLocal} vs ${equipoVisitante}:`, err.message);
+            }
+        }
 
         const { rows } = await pool.query(
             `INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, fase, external_id)

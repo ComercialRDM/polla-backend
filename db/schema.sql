@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS codigos_telefono (
 CREATE TABLE IF NOT EXISTS influencer_registros (
     id              SERIAL PRIMARY KEY,
     nombre          VARCHAR(150) NOT NULL,
-    correo          VARCHAR(150) NOT NULL,
+    correo          VARCHAR(150) NOT NULL UNIQUE,
     celular         VARCHAR(20) NOT NULL,
     red_contenido   VARCHAR(20) NOT NULL CHECK (red_contenido IN ('instagram', 'tiktok', 'ambas')),
     atendido        BOOLEAN NOT NULL DEFAULT FALSE,
@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS influencer_registros (
     autoriza_foto   BOOLEAN NOT NULL DEFAULT FALSE,
     fecha_registro  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE influencer_registros ADD CONSTRAINT IF NOT EXISTS influencer_registros_correo_key UNIQUE (correo);
 
 -- usuarios.foto_imagen / foto_mime: copiada de influencer_registros al crear
 -- el Bono Especial (mismo celular). usuarios.ranking_snapshot_influencer:

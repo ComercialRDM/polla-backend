@@ -13,6 +13,7 @@ const { crearTransaccionesPrueba, limpiarTransaccionesPrueba } = require('../ser
 const { crearBonosEspeciales, listarBonosEspeciales, enviarInvitacionDifusion, reenviarBonoWhatsApp, obtenerRankingEspeciales } = require('../services/especialesService');
 const { registrarEvento } = require('../services/auditoriaService');
 const { alertaInmediata, ALERTAS } = require('../services/alertaService');
+const { verificarFechaPartido, horaColumbia } = require('../services/verificacionCalendario');
 const { invalidate } = require('../utils/cache');
 const { notificar } = require('../utils/sse');
 const { enviarMensajeManyChat, formatearCelularWhatsApp, obtenerSubscriberId } = require('../services/manychatService');
@@ -519,6 +520,43 @@ router.patch('/partidos/:id', async (req, res) => {
 // - Elimina bonos_colombia incorrectos (solo los no reclamados; advierte sobre los reclamados)
 // - Actualiza el marcador
 // - Re-ejecuta la lógica del Bono Colombia con el resultado correcto
+// GET /api/admin/partidos/:id/verificar-fecha
+// Consulta las 4 fuentes en tiempo real y reporta si la fecha/hora en la BD
+// coincide con el consenso externo. Útil para auditar partidos de eliminatoria.
+router.get('/partidos/:id/verificar-fecha', adminAuth, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { rows } = await pool.query(
+            'SELECT id, equipo_local, equipo_visitante, fecha_hora_inicio, fase FROM partidos WHERE id = $1',
+            [id]
+        );
+        if (!rows.length) return res.status(404).json({ success: false, error: 'Partido no encontrado' });
+
+        const p = rows[0];
+        const verificacion = await verificarFechaPartido(
+            p.equipo_local,
+            p.equipo_visitante,
+            p.fecha_hora_inicio,
+        );
+
+        return res.json({
+            success: true,
+            partido: {
+                id: p.id,
+                equipo_local: p.equipo_local,
+                equipo_visitante: p.equipo_visitante,
+                fecha_hora_inicio: p.fecha_hora_inicio,
+                hora_colombia: horaColumbia(p.fecha_hora_inicio),
+                fase: p.fase,
+            },
+            verificacion,
+        });
+    } catch (err) {
+        console.error('Error en verificar-fecha:', err);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
 // - Registra auditoría con las fuentes citadas por el admin
 router.post('/partidos/:id/recorregir', async (req, res) => {
     const { id } = req.params;
