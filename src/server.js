@@ -485,6 +485,7 @@ app.listen(PORT, async () => {
         await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS foto_imagen BYTEA`);
         await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS foto_mime TEXT`);
         await pool.query(`ALTER TABLE influencer_registros ADD COLUMN IF NOT EXISTS autoriza_foto BOOLEAN NOT NULL DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE influencer_registros ADD CONSTRAINT IF NOT EXISTS influencer_registros_correo_key UNIQUE (correo)`);
     } catch (err) {
         console.error('Error creando tabla influencer_registros:', err.message);
     }
