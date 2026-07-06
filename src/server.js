@@ -59,9 +59,11 @@ app.use(helmet({
             connectSrc: ["'self'", 'https://api.manychat.com', 'https://sandbox.wompi.co', 'https://production.wompi.co'],
             fontSrc: ["'self'", 'https:', 'data:'],
             frameSrc: ["'none'"],
+            frameAncestors: ["'none'"],
             objectSrc: ["'none'"],
         },
     },
+    frameguard: { action: 'deny' },
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
 }));
