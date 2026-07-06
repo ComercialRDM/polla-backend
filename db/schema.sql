@@ -295,6 +295,28 @@ CREATE TABLE IF NOT EXISTS auditoria_eventos (
 );
 
 -- ============================================================
+-- Tabla: grupos
+-- Mini-torneos entre amigos: cada grupo es para un partido específico.
+-- token_grupo se usa en la URL pública (/grupo/:token).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS grupos (
+    id               SERIAL PRIMARY KEY,
+    nombre           VARCHAR(100) NOT NULL,
+    admin_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    partido_id       INTEGER NOT NULL REFERENCES partidos(id),
+    token_grupo      UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    max_miembros     INTEGER NOT NULL DEFAULT 20,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS grupo_miembros (
+    grupo_id   INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    joined_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (grupo_id, usuario_id)
+);
+
+-- ============================================================
 -- Datos de ejemplo: partido Colombia vs Brasil (fecha futura UTC)
 -- ============================================================
 INSERT INTO partidos (equipo_local, equipo_visitante, fecha_hora_inicio, estado)
