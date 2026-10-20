@@ -24,6 +24,7 @@ const gruposRouter = require('./routes/grupos');
 const checklistRouter = require('./routes/checklist');
 const invitacionRouter = require('./routes/invitacion');
 const { adminRouter: marcasAdminRouter, publicRouter: marcasPublicRouter } = require('./routes/marcas');
+const rifaRouter = require('./routes/rifa');
 const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -92,6 +93,8 @@ app.use('/api/transacciones', transaccionesLimiter, transaccionesRouter);
 app.use('/api/webhooks', webhooksLimiter, webhooksRouter);
 app.use('/api/polla', pollaLimiter, pollaRouter);
 app.use('/api/auth', authLimiter, authRouter);
+// La rifa tiene su propio limitador; se monta antes de /api/admin para no pasar por adminLimiter.
+app.use('/api/admin/rifa', rifaRouter);
 app.use('/api/admin', adminLimiter, adminRouter);
 app.use('/api/admin/simulador', adminLimiter, simuladorRouter);
 app.use('/api/local', adminLimiter, localRouter);
