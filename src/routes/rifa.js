@@ -77,27 +77,40 @@ const CAMPOS_LISTA = `numero, factura, boleta_de_factura, to_char(fecha_factura,
     sede, nombre, cedula, celular, correo, imagen_sha256, observacion_auditoria,
     revision_estado, revision_nota, revisado_por, revisado_en, canal_envio, canal_motivo, envio_estado`;
 
-// GET /api/admin/rifa/resumen — totales y estado de cada lote
+// Los lotes de revisión agrupan de a 10, en orden de número, SOLO las boletas
+// que salen por WhatsApp. Las de "otro medio" (sin celular o canceló la
+// suscripción) van al listado de pendientes por enviar. Si a una boleta se le
+// completa el celular, pasa sola a los lotes.
+const LOTES_WA = `SELECT numero, ((ROW_NUMBER() OVER (ORDER BY numero) - 1) / ${TAM_LOTE}) + 1 AS lote
+                  FROM rifa_boletas WHERE canal_envio = 'whatsapp'`;
+
+async function numerosDelLote(n) {
+    const { rows } = await pool.query(`SELECT numero FROM (${LOTES_WA}) l WHERE lote = $1 ORDER BY numero`, [n]);
+    return rows.map((r) => r.numero);
+}
+
+// GET /api/admin/rifa/resumen — totales, estado de cada lote y pendientes
 router.get('/resumen', async (req, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT ((numero - 1) / $1) + 1 AS lote,
-                    MIN(numero) AS desde, MAX(numero) AS hasta, COUNT(*)::int AS total,
-                    COUNT(*) FILTER (WHERE revision_estado = 'aprobada')::int AS aprobadas,
-                    COUNT(*) FILTER (WHERE revision_estado = 'rechazada')::int AS rechazadas,
+            `SELECT l.lote, MIN(b.numero) AS desde, MAX(b.numero) AS hasta, COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE b.revision_estado = 'aprobada')::int AS aprobadas,
+                    COUNT(*) FILTER (WHERE b.revision_estado = 'rechazada')::int AS rechazadas,
+                    MAX(b.revisado_en) AS ultima_revision
+             FROM (${LOTES_WA}) l JOIN rifa_boletas b USING (numero)
+             GROUP BY l.lote ORDER BY l.lote`
+        );
+        const { rows: [p] } = await pool.query(
+            `SELECT COUNT(*)::int AS boletas, COUNT(DISTINCT factura)::int AS facturas, COUNT(DISTINCT cedula)::int AS clientes,
                     COUNT(*) FILTER (WHERE celular IS NULL OR celular = '')::int AS sin_celular,
-                    COUNT(*) FILTER (WHERE canal_envio = 'otro_medio')::int AS otro_medio,
-                    MAX(revisado_en) AS ultima_revision
-             FROM rifa_boletas GROUP BY 1 ORDER BY 1`,
-            [TAM_LOTE]
+                    COUNT(*) FILTER (WHERE celular IS NOT NULL AND celular <> '')::int AS cancelados
+             FROM rifa_boletas WHERE canal_envio = 'otro_medio'`
         );
         const tot = rows.reduce((a, l) => ({
-            total: a.total + l.total, aprobadas: a.aprobadas + l.aprobadas,
-            rechazadas: a.rechazadas + l.rechazadas, sin_celular: a.sin_celular + l.sin_celular,
-            otro_medio: a.otro_medio + l.otro_medio,
-        }), { total: 0, aprobadas: 0, rechazadas: 0, sin_celular: 0, otro_medio: 0 });
+            total: a.total + l.total, aprobadas: a.aprobadas + l.aprobadas, rechazadas: a.rechazadas + l.rechazadas,
+        }), { total: 0, aprobadas: 0, rechazadas: 0 });
         const verif = await ultimaVerificacionCancelados();
-        return res.json({ success: true, tam_lote: TAM_LOTE, totales: tot, lotes: rows, verificacion_cancelados: verif });
+        return res.json({ success: true, tam_lote: TAM_LOTE, totales: tot, lotes: rows, pendientes: p, verificacion_cancelados: verif });
     } catch (err) {
         console.error('[rifa] resumen:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno' });
@@ -110,12 +123,26 @@ router.get('/lotes/:n', async (req, res) => {
     if (!Number.isInteger(n) || n < 1) return res.status(400).json({ success: false, error: 'Lote inválido' });
     try {
         const { rows } = await pool.query(
-            `SELECT ${CAMPOS_LISTA} FROM rifa_boletas WHERE numero BETWEEN $1 AND $2 ORDER BY numero`,
-            [(n - 1) * TAM_LOTE + 1, n * TAM_LOTE]
+            `SELECT ${CAMPOS_LISTA} FROM rifa_boletas WHERE numero = ANY($1::int[]) ORDER BY numero`,
+            [await numerosDelLote(n)]
         );
         return res.json({ success: true, lote: n, boletas: rows });
     } catch (err) {
         console.error('[rifa] lote:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+// GET /api/admin/rifa/pendientes — boletas que NO salen por WhatsApp
+// (sin celular o canceló la suscripción), para gestionarlas aparte.
+router.get('/pendientes', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT ${CAMPOS_LISTA} FROM rifa_boletas WHERE canal_envio = 'otro_medio' ORDER BY numero`
+        );
+        return res.json({ success: true, boletas: rows });
+    } catch (err) {
+        console.error('[rifa] pendientes:', err.message);
         return res.status(500).json({ success: false, error: 'Error interno' });
     }
 });
@@ -144,13 +171,12 @@ router.get('/boletas/:numero/imagen', async (req, res) => {
 router.post('/lotes/:n/revision', async (req, res) => {
     const n = Number(req.params.n);
     const decisiones = Array.isArray(req.body?.decisiones) ? req.body.decisiones : [];
-    const desde = (n - 1) * TAM_LOTE + 1;
-    const hasta = n * TAM_LOTE;
     if (!Number.isInteger(n) || n < 1 || !decisiones.length) {
         return res.status(400).json({ success: false, error: 'Faltan decisiones' });
     }
+    const delLote = new Set(await numerosDelLote(n));
     for (const d of decisiones) {
-        if (!Number.isInteger(d.numero) || d.numero < desde || d.numero > hasta) {
+        if (!Number.isInteger(d.numero) || !delLote.has(d.numero)) {
             return res.status(400).json({ success: false, error: `La boleta ${d.numero} no pertenece al lote ${n}` });
         }
         if (!['aprobada', 'rechazada'].includes(d.estado)) {
