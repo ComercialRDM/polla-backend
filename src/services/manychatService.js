@@ -316,4 +316,4 @@ async function enviarBonoPorPlantilla({ celular, subscriberId, nombre, monto, co
     return { subscriberId: id };
 }
 
-module.exports = { enviarMensajeManyChat, enviarBonoManyChat, enviarBonoPorPlantilla, formatearCelularWhatsApp, obtenerSubscriberId };
+module.exports = { enviarMensajeManyChat, enviarBonoManyChat, enviarBonoPorPlantilla, formatearCelularWhatsApp, obtenerSubscriberId, manychatRequest, cargarCamposCache, SUBSCRIBER_ID_COPIA_CONTROL, NUMERO_COPIA_CONTROL };
