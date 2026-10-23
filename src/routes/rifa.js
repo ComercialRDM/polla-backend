@@ -82,7 +82,7 @@ const CAMPOS_LISTA = `numero, factura, boleta_de_factura, to_char(fecha_factura,
 // suscripción) van al listado de pendientes por enviar. Si a una boleta se le
 // completa el celular, pasa sola a los lotes.
 const LOTES_WA = `SELECT numero, ((ROW_NUMBER() OVER (ORDER BY numero) - 1) / ${TAM_LOTE}) + 1 AS lote
-                  FROM rifa_boletas WHERE canal_envio = 'whatsapp'`;
+                  FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada`;
 
 async function numerosDelLote(n) {
     const { rows } = await pool.query(`SELECT numero FROM (${LOTES_WA}) l WHERE lote = $1 ORDER BY numero`, [n]);
@@ -104,7 +104,7 @@ router.get('/resumen', async (req, res) => {
             `SELECT COUNT(*)::int AS boletas, COUNT(DISTINCT factura)::int AS facturas, COUNT(DISTINCT cedula)::int AS clientes,
                     COUNT(*) FILTER (WHERE celular IS NULL OR celular = '')::int AS sin_celular,
                     COUNT(*) FILTER (WHERE celular IS NOT NULL AND celular <> '')::int AS cancelados
-             FROM rifa_boletas WHERE canal_envio = 'otro_medio'`
+             FROM rifa_boletas WHERE canal_envio = 'otro_medio' AND NOT anulada`
         );
         const tot = rows.reduce((a, l) => ({
             total: a.total + l.total, aprobadas: a.aprobadas + l.aprobadas, rechazadas: a.rechazadas + l.rechazadas,
@@ -138,7 +138,8 @@ router.get('/lotes/:n', async (req, res) => {
 router.get('/pendientes', async (req, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT ${CAMPOS_LISTA} FROM rifa_boletas WHERE canal_envio = 'otro_medio' ORDER BY numero`
+            `SELECT ${CAMPOS_LISTA}, anulada, anulada_motivo, to_char(anulada_en AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD HH24:MI') AS anulada_en
+             FROM rifa_boletas WHERE canal_envio = 'otro_medio' OR anulada ORDER BY numero`
         );
         return res.json({ success: true, boletas: rows });
     } catch (err) {
@@ -170,14 +171,62 @@ router.get('/boletas/:numero/imagen', async (req, res) => {
 // Registra quién y cuándo revisó cada boleta. Solo acepta números del lote.
 router.post('/lotes/:n/revision', async (req, res) => {
     const n = Number(req.params.n);
-    const decisiones = Array.isArray(req.body?.decisiones) ? req.body.decisiones : [];
-    if (!Number.isInteger(n) || n < 1 || !decisiones.length) {
-        return res.status(400).json({ success: false, error: 'Faltan decisiones' });
+    if (!Number.isInteger(n) || n < 1) return res.status(400).json({ success: false, error: 'Lote inválido' });
+    return guardarRevision(req, res, new Set(await numerosDelLote(n)), `lote ${n}`);
+});
+
+// ── Cortes horarios (boletas que llegan automáticamente desde Alegra) ───────
+// GET /api/admin/rifa/cortes — cortes con boletas, del más reciente al más antiguo
+router.get('/cortes', async (req, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT corte, corte <= NOW() AS cerrado, COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE revision_estado = 'aprobada')::int AS aprobadas,
+                    COUNT(*) FILTER (WHERE revision_estado = 'rechazada')::int AS rechazadas,
+                    COUNT(*) FILTER (WHERE canal_envio = 'otro_medio')::int AS otro_medio
+             FROM rifa_boletas WHERE corte IS NOT NULL AND NOT anulada
+             GROUP BY corte ORDER BY corte DESC LIMIT 300`
+        );
+        return res.json({ success: true, cortes: rows });
+    } catch (err) {
+        console.error('[rifa] cortes:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
     }
-    const delLote = new Set(await numerosDelLote(n));
+});
+
+async function numerosDelCorte(iso) {
+    const { rows } = await pool.query(
+        'SELECT numero FROM rifa_boletas WHERE corte = $1::timestamptz AND NOT anulada ORDER BY numero', [iso]
+    );
+    return rows.map((r) => r.numero);
+}
+
+// GET /api/admin/rifa/cortes/:iso — boletas de un corte
+router.get('/cortes/:iso', async (req, res) => {
+    if (Number.isNaN(Date.parse(req.params.iso))) return res.status(400).json({ success: false, error: 'Corte inválido' });
+    try {
+        const { rows } = await pool.query(
+            `SELECT ${CAMPOS_LISTA} FROM rifa_boletas WHERE numero = ANY($1::int[]) ORDER BY numero`,
+            [await numerosDelCorte(req.params.iso)]
+        );
+        return res.json({ success: true, boletas: rows });
+    } catch (err) {
+        console.error('[rifa] corte:', err.message);
+        return res.status(500).json({ success: false, error: 'Error interno' });
+    }
+});
+
+router.post('/cortes/:iso/revision', async (req, res) => {
+    if (Number.isNaN(Date.parse(req.params.iso))) return res.status(400).json({ success: false, error: 'Corte inválido' });
+    return guardarRevision(req, res, new Set(await numerosDelCorte(req.params.iso)), 'este corte');
+});
+
+async function guardarRevision(req, res, permitidas, grupo) {
+    const decisiones = Array.isArray(req.body?.decisiones) ? req.body.decisiones : [];
+    if (!decisiones.length) return res.status(400).json({ success: false, error: 'Faltan decisiones' });
     for (const d of decisiones) {
-        if (!Number.isInteger(d.numero) || !delLote.has(d.numero)) {
-            return res.status(400).json({ success: false, error: `La boleta ${d.numero} no pertenece al lote ${n}` });
+        if (!Number.isInteger(d.numero) || !permitidas.has(d.numero)) {
+            return res.status(400).json({ success: false, error: `La boleta ${d.numero} no pertenece a ${grupo}` });
         }
         if (!['aprobada', 'rechazada'].includes(d.estado)) {
             return res.status(400).json({ success: false, error: `Estado inválido para la boleta ${d.numero}` });
@@ -220,7 +269,7 @@ router.post('/lotes/:n/revision', async (req, res) => {
     } finally {
         client.release();
     }
-});
+}
 
 // POST /api/admin/rifa/boletas/:numero/canal — body: { canal: 'whatsapp'|'otro_medio', motivo }
 // Cambia el canal de envío de TODAS las boletas del mismo cliente (misma cédula),

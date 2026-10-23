@@ -59,15 +59,16 @@ async function config(clave) {
     return rows[0]?.valor || null;
 }
 
-async function secretoWebhook() {
-    let s = await config('webhook_secret');
+async function secreto(clave) {
+    let s = await config(clave);
     if (!s) {
         s = crypto.randomBytes(24).toString('hex');
-        await pool.query('INSERT INTO rifa_config (clave, valor) VALUES ($1, $2) ON CONFLICT (clave) DO NOTHING', ['webhook_secret', s]);
-        s = await config('webhook_secret');
+        await pool.query('INSERT INTO rifa_config (clave, valor) VALUES ($1, $2) ON CONFLICT (clave) DO NOTHING', [clave, s]);
+        s = await config(clave);
     }
     return s;
 }
+const secretoWebhook = () => secreto('webhook_secret');
 
 const fmt = (n) => `#${String(n).padStart(3, '0')}`;
 function listaBoletas(nums) {
@@ -87,7 +88,7 @@ const SQL_CLIENTES = `
            ARRAY_AGG(DISTINCT factura) AS facturas,
            BOOL_AND(revision_estado = 'aprobada') AS aprobadas,
            BOOL_AND(envio_estado = 'pendiente') AS sin_enviar
-    FROM rifa_boletas WHERE canal_envio = 'whatsapp'
+    FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada
     GROUP BY cedula`;
 
 async function asegurarCampos() {
@@ -148,7 +149,7 @@ adminRouter.get('/resumen', async (req, res) => {
         const sinAprobar = rows.filter((c) => !c.aprobadas);
         const { rows: est } = await pool.query(
             `SELECT envio_estado, COUNT(DISTINCT cedula)::int AS clientes, COUNT(*)::int AS boletas
-             FROM rifa_boletas WHERE canal_envio = 'whatsapp' GROUP BY 1`
+             FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada GROUP BY 1`
         );
         const { rows: ultimos } = await pool.query(
             `SELECT e.id, e.cedula, e.celular, e.numeros, e.es_prueba, e.estado, e.detalle, e.enviado_en, e.entregado_en,
@@ -157,7 +158,10 @@ adminRouter.get('/resumen', async (req, res) => {
         );
         return res.json({
             success: true,
-            configurado: { flow_ns: await config('flow_ns'), webhook_secret: await secretoWebhook(), backend_url: process.env.BACKEND_URL || null },
+            configurado: {
+                flow_ns: await config('flow_ns'), webhook_secret: await secretoWebhook(), backend_url: process.env.BACKEND_URL || null,
+                integracion_secret: await secreto('integracion_secret'),
+            },
             clientes_listos: listos.length, boletas_listas: listos.reduce((a, c) => a + c.numeros.length, 0),
             clientes_sin_aprobar: sinAprobar.length,
             por_estado: est, envios: ultimos,
