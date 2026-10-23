@@ -232,7 +232,9 @@ async function enviarACliente(cliente, { flowNs, prueba, actor }) {
                 await pool.query(`UPDATE rifa_boletas SET canal_envio = 'otro_medio', canal_motivo = $2 WHERE cedula = $1`,
                     [cliente.cedula, 'WhatsApp rechazó el envío (suscripción/permiso)']);
             } else {
-                await pool.query(`UPDATE rifa_boletas SET envio_error = $2 WHERE numero = ANY($1::int[])`, [cliente.numeros, msg]);
+                // Sale de la cola (envio_estado = 'fallido') para que el envío
+                // automático no lo reintente sin fin; se reintenta a mano.
+                await pool.query(`UPDATE rifa_boletas SET envio_estado = 'fallido', envio_error = $2 WHERE numero = ANY($1::int[])`, [cliente.numeros, msg]);
             }
         }
         return { cedula: cliente.cedula, estado: esOptOut ? 'cancelado' : 'fallido', detalle: msg };
@@ -271,6 +273,16 @@ adminRouter.post('/lote', async (req, res) => {
         await new Promise((r) => setTimeout(r, 1500));
     }
     return res.json({ success: true, resultados });
+});
+
+// POST /reintentar-fallidos — devuelve a la cola los clientes con envío fallido
+// (por ejemplo, después de corregir su contacto en ManyChat).
+adminRouter.post('/reintentar-fallidos', async (req, res) => {
+    const { rows } = await pool.query(
+        `UPDATE rifa_boletas SET envio_estado = 'pendiente', envio_error = NULL
+         WHERE envio_estado = 'fallido' AND canal_envio = 'whatsapp' AND NOT anulada RETURNING cedula`
+    );
+    return res.json({ success: true, clientes: new Set(rows.map((r) => r.cedula)).size, boletas: rows.length });
 });
 
 // ── Router público: /api/rifa ────────────────────────────────────────────────
