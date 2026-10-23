@@ -388,4 +388,33 @@ async function enviarCorreoRecuperacionAcceso({ destinatario, usuario, enlace, v
     });
 }
 
-module.exports = { enviarCorreoRecuperacionAcceso, enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
+/**
+ * Diagnóstico del correo saliente: qué variables hay (sin revelar valores),
+ * si el servidor SMTP acepta la conexión y, opcionalmente, un envío de prueba.
+ */
+async function diagnosticarCorreo({ enviarA } = {}) {
+    const vars = Object.fromEntries(['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM']
+        .map((k) => [k, process.env[k] ? (k === 'SMTP_PASS' ? 'definida' : k === 'SMTP_USER' ? process.env[k].replace(/^(.{3}).*(@.*)$/, '$1•••$2') : process.env[k]) : 'FALTA']));
+    const r = { variables: vars };
+    try {
+        await crearTransporter().verify();
+        r.conexion = 'ok';
+    } catch (err) {
+        r.conexion = `error: ${err.code || ''} ${err.message}`.slice(0, 400);
+    }
+    if (enviarA) {
+        try {
+            const info = await crearTransporter().sendMail({
+                from: process.env.MAIL_FROM, to: enviarA,
+                subject: 'Prueba de correo · GanaConRetoucherie',
+                html: '<p>Este es un correo de prueba del panel de www.ganaconretoucherie.com. Si lo recibes, el envío de correos funciona.</p>',
+            });
+            r.envio = { aceptado: info.accepted, rechazado: info.rejected, respuesta: String(info.response || '').slice(0, 200) };
+        } catch (err) {
+            r.envio = `error: ${err.code || ''} ${err.message}`.slice(0, 400);
+        }
+    }
+    return r;
+}
+
+module.exports = { diagnosticarCorreo, enviarCorreoRecuperacionAcceso, enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };

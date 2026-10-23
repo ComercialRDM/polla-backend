@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const { verificarToken } = require('../utils/adminTokens');
-const { enviarCorreoRecuperacionAcceso } = require('../services/emailService');
+const { enviarCorreoRecuperacionAcceso, diagnosticarCorreo } = require('../services/emailService');
 
 // Cuenta de los usuarios del panel (admin_usuarios, todos los roles: ADMIN,
 // RIFA y los que se agreguen): verificación en dos pasos, cambio de contraseña
@@ -97,6 +97,13 @@ router.post('/cambiar-password', limiteGeneral, cuentaAuth, async (req, res) => 
     return res.json({ success: true });
 });
 
+// POST /diagnostico-correo — body: { enviar: true } para mandar una prueba al
+// correo de recuperación. Solo cuentas del panel.
+router.post('/diagnostico-correo', limiteGeneral, cuentaAuth, async (req, res) => {
+    const r = await diagnosticarCorreo({ enviarA: req.body?.enviar ? CORREO_RECUPERACION : null });
+    return res.json({ success: true, destino: CORREO_RECUPERACION, ...r });
+});
+
 // ── Sin sesión: recuperación ─────────────────────────────────────────────────
 // POST /recuperar — body: { usuario }. Responde siempre igual (no revela si el
 // usuario existe). El enlace va al correo de la empresa.
@@ -121,7 +128,7 @@ router.post('/recuperar', limiteRecuperar, async (req, res) => {
             });
         }
     } catch (err) {
-        console.error('[cuenta] recuperar:', err.message);
+        console.error('[cuenta] recuperar (correo no enviado):', err.code, err.message);
     }
     return res.json(generico);
 });
