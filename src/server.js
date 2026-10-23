@@ -27,6 +27,7 @@ const { adminRouter: marcasAdminRouter, publicRouter: marcasPublicRouter } = req
 const rifaRouter = require('./routes/rifa');
 const { adminRouter: rifaEnvioAdminRouter, publicRouter: rifaPublicRouter } = require('./routes/rifaEnvio');
 const rifaIntegracionRouter = require('./routes/rifaIntegracion');
+const cuentaRouter = require('./routes/cuenta');
 const { registrarEvento: registrarAlerta } = require('./services/alertaService');
 const { authLimiter, adminLimiter, transaccionesLimiter, pollaLimiter, webhooksLimiter, influencersLimiter, clicLimiter } = require('./middleware/rateLimiters');
 const { iniciarMonitorMarcadores } = require('./services/marcadoresService');
@@ -98,6 +99,7 @@ app.use('/api/auth', authLimiter, authRouter);
 // La rifa tiene su propio limitador; se monta antes de /api/admin para no pasar por adminLimiter.
 app.use('/api/admin/rifa/envio', rifaEnvioAdminRouter);
 app.use('/api/admin/rifa', rifaRouter);
+app.use('/api/cuenta', cuentaRouter);
 app.use('/api/rifa/integracion', rifaIntegracionRouter);
 app.use('/api/rifa', rifaPublicRouter);
 app.use('/api/admin', adminLimiter, adminRouter);

@@ -18,13 +18,18 @@ async function rifaAuth(req, res, next) {
     }
     try {
         const { rows } = await pool.query(
-            'SELECT token_version, rol FROM admin_usuarios WHERE id = $1 AND activo = TRUE',
+            'SELECT token_version, rol, totp_enabled FROM admin_usuarios WHERE id = $1 AND activo = TRUE',
             [sesion.id]
         );
         // El rol se vuelve a leer de la base: si a la cuenta le quitan permisos,
         // sus tokens viejos dejan de servir.
         if (!rows.length || rows[0].token_version !== sesion.tv || (rows[0].rol || 'ADMIN') !== sesion.role) {
             return res.status(401).json({ success: false, error: 'Sesión inválida. Vuelve a iniciar sesión.' });
+        }
+        // Verificación en dos pasos obligatoria para todas las cuentas (se
+        // configura en /api/cuenta/2fa, que no pasa por este middleware).
+        if (!rows[0].totp_enabled) {
+            return res.status(403).json({ success: false, requiere_2fa: true, error: 'Debes activar la verificación en dos pasos para continuar.' });
         }
     } catch (err) {
         console.error('rifaAuth:', err.message);

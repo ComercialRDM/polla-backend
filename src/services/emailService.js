@@ -363,4 +363,29 @@ async function enviarCorreoOTP({ destinatario, codigo }) {
     });
 }
 
-module.exports = { enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
+/**
+ * Recuperación de acceso al panel (cualquier rol). Siempre va al correo de la
+ * empresa: el dueño decide si reenvía el enlace a la persona.
+ */
+async function enviarCorreoRecuperacionAcceso({ destinatario, usuario, enlace, vigenciaMin, ip }) {
+    const transporter = crearTransporter();
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        <h1 style="color: #f59e0b;">🔐 Recuperar acceso al panel</h1>
+        <p>Se pidió restablecer la contraseña del usuario <strong>${usuario}</strong> en www.ganaconretoucherie.com.</p>
+        <p>Si fuiste tú o lo autorizas, abre este enlace (o reenvíalo a la persona) para crear una contraseña nueva:</p>
+        <p style="text-align: center; margin: 28px 0;">
+            <a href="${enlace}" style="background: #f59e0b; color: #18181b; font-weight: bold; padding: 14px 28px; border-radius: 999px; text-decoration: none;">Crear contraseña nueva</a>
+        </p>
+        <p>El enlace vence en <strong>${vigenciaMin} minutos</strong> y sirve una sola vez. La verificación en dos pasos de la cuenta no cambia.</p>
+        <p style="font-size: 12px; color: #71717a;">Solicitud desde la IP ${ip || 'desconocida'}. Si nadie lo pidió, ignora este correo: la contraseña actual sigue funcionando.</p>
+    </div>`;
+    await transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        subject: `Recuperar acceso del usuario ${usuario} · GanaConRetoucherie`,
+        html,
+    });
+}
+
+module.exports = { enviarCorreoRecuperacionAcceso, enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
