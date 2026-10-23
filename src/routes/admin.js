@@ -45,7 +45,7 @@ router.post('/login', adminLoginLimiter, async (req, res) => {
 
     try {
         const { rows } = await pool.query(
-            'SELECT id, usuario, password_hash, totp_secret, totp_enabled, token_version FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
+            'SELECT id, usuario, password_hash, totp_secret, totp_enabled, token_version, rol FROM admin_usuarios WHERE usuario = $1 AND activo = TRUE',
             [usuario]
         );
 
@@ -69,8 +69,10 @@ router.post('/login', adminLoginLimiter, async (req, res) => {
             }
         }
 
-        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, tv: rows[0].token_version });
-        return res.json({ success: true, token, usuario: rows[0].usuario });
+        // rol ADMIN (panel completo) o RIFA (solo /api/admin/rifa, ver middleware/rifaAuth.js)
+        const role = rows[0].rol || 'ADMIN';
+        const token = generarToken({ id: rows[0].id, usuario: rows[0].usuario, role, tv: rows[0].token_version });
+        return res.json({ success: true, token, usuario: rows[0].usuario, role });
     } catch (err) {
         console.error('Error en /admin/login:', err);
         return res.status(500).json({ success: false, error: 'Error interno' });

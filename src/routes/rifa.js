@@ -1,7 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const pool = require('../db');
-const adminAuth = require('../middleware/adminAuth');
+const rifaAuth = require('../middleware/rifaAuth');
 
 // Rifa iPhone 18 Pro: revisión y aprobación de boletas antes del envío por
 // WhatsApp. Las boletas (datos + imagen auditada) se cargan desde el script
@@ -50,6 +50,7 @@ pool.query(`
         CHECK (revision_estado IN ('pendiente', 'aprobada', 'rechazada')),
         CHECK (canal_envio IN ('whatsapp', 'otro_medio'))
     );
+    ALTER TABLE admin_usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(20) NOT NULL DEFAULT 'ADMIN';
     CREATE TABLE IF NOT EXISTS rifa_eventos (
         id SERIAL PRIMARY KEY,
         numero INTEGER REFERENCES rifa_boletas(numero),
@@ -71,7 +72,7 @@ async function ultimaVerificacionCancelados() {
 }
 
 const router = express.Router();
-router.use(rifaLimiter, adminAuth);
+router.use(rifaLimiter, rifaAuth);
 
 const CAMPOS_LISTA = `numero, factura, boleta_de_factura, to_char(fecha_factura, 'YYYY-MM-DD') AS fecha_factura,
     sede, nombre, cedula, celular, correo, imagen_sha256, observacion_auditoria,

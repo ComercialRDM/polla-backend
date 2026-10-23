@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const pool = require('../db');
-const adminAuth = require('../middleware/adminAuth');
+const rifaAuth = require('../middleware/rifaAuth');
 const {
     manychatRequest, cargarCamposCache, obtenerSubscriberId, SUBSCRIBER_ID_COPIA_CONTROL, NUMERO_COPIA_CONTROL,
 } = require('../services/manychatService');
@@ -139,7 +139,7 @@ async function asegurarTokens(numeros) {
 
 // ── Router admin: /api/admin/rifa/envio ──────────────────────────────────────
 const adminRouter = express.Router();
-adminRouter.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false }), adminAuth);
+adminRouter.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false }), rifaAuth);
 
 // GET /resumen — configuración, clientes listos y bitácora de envíos
 adminRouter.get('/resumen', async (req, res) => {
