@@ -47,6 +47,12 @@ pool.query(`
         creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS rifa_envios_subscriber ON rifa_envios (subscriber_id, creado_en DESC);
+    CREATE TABLE IF NOT EXISTS rifa_contactos_manychat (
+        celular VARCHAR(12) PRIMARY KEY,
+        subscriber_id VARCHAR(40) NOT NULL,
+        actor VARCHAR(80),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS rifa_config (
         clave VARCHAR(40) PRIMARY KEY,
         valor TEXT NOT NULL,
@@ -154,7 +160,8 @@ adminRouter.get('/resumen', async (req, res) => {
         const { rows: ultimos } = await pool.query(
             `SELECT e.id, e.cedula, e.celular, e.numeros, e.es_prueba, e.estado, e.detalle, e.enviado_en, e.entregado_en,
                     e.respuesta, e.respondido_en, (SELECT MIN(nombre) FROM rifa_boletas b WHERE b.cedula = e.cedula) AS nombre
-             FROM rifa_envios e ORDER BY e.creado_en DESC LIMIT 400`
+             FROM (SELECT DISTINCT ON (cedula, es_prueba) * FROM rifa_envios ORDER BY cedula, es_prueba, creado_en DESC) e
+             ORDER BY e.creado_en DESC LIMIT 400`
         );
         return res.json({
             success: true,
@@ -194,8 +201,19 @@ async function enviarACliente(cliente, { flowNs, prueba, actor }) {
         [cliente.cedula, destinoCel, cliente.numeros, prueba, actor]
     );
     try {
-        if (!subscriberId) ({ subscriberId } = await obtenerSubscriberId(cliente.celular));
-        if (!subscriberId) throw new Error('No se encontró el contacto en ManyChat');
+        if (!subscriberId) {
+            // 1) ID de ManyChat registrado a mano para este celular (la API de
+            //    ManyChat no siempre encuentra contactos de WhatsApp por número).
+            const { rows: m } = await pool.query('SELECT subscriber_id FROM rifa_contactos_manychat WHERE celular = $1',
+                [String(cliente.celular).replace(/\D/g, '').slice(-10)]);
+            subscriberId = m[0]?.subscriber_id || null;
+        }
+        let diag = null;
+        if (!subscriberId) ({ subscriberId, diagnostico: diag } = await obtenerSubscriberId(cliente.celular));
+        if (!subscriberId) {
+            const motivo = diag?.crear?.message || diag?.crear?.details?.messages?.[0]?.message || '';
+            throw new Error(`No se encontró el contacto en ManyChat${motivo ? ` (${String(motivo).slice(0, 160)})` : ''}. Registra su ID de ManyChat en la bitácora.`);
+        }
         await pool.query('UPDATE rifa_envios SET subscriber_id = $2 WHERE id = $1', [envio.id, String(subscriberId)]);
 
         const cancelado = await suscripcionCancelada(subscriberId);
@@ -273,6 +291,29 @@ adminRouter.post('/lote', async (req, res) => {
         await new Promise((r) => setTimeout(r, 1500));
     }
     return res.json({ success: true, resultados });
+});
+
+// POST /contacto-manychat — body: { cedula, subscriber_id }. Registra a mano el
+// ID de ManyChat del cliente (ManyChat → Contacts → abrir contacto → ícono de ID)
+// y devuelve sus boletas fallidas a la cola.
+adminRouter.post('/contacto-manychat', async (req, res) => {
+    const id = String(req.body?.subscriber_id || '').trim();
+    if (!/^\d{5,20}$/.test(id)) return res.status(400).json({ success: false, error: 'El ID de ManyChat debe ser solo números.' });
+    const { rows: [c] } = await pool.query(
+        `SELECT MIN(celular) AS celular FROM rifa_boletas WHERE cedula = $1 AND canal_envio = 'whatsapp'`, [String(req.body?.cedula || '')]
+    );
+    if (!c?.celular) return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
+    const cel = c.celular.replace(/\D/g, '').slice(-10);
+    await pool.query(
+        `INSERT INTO rifa_contactos_manychat (celular, subscriber_id, actor) VALUES ($1, $2, $3)
+         ON CONFLICT (celular) DO UPDATE SET subscriber_id = EXCLUDED.subscriber_id, actor = EXCLUDED.actor, actualizado_en = NOW()`,
+        [cel, id, req.admin.usuario]
+    );
+    const { rowCount } = await pool.query(
+        `UPDATE rifa_boletas SET envio_estado = 'pendiente', envio_error = NULL
+         WHERE cedula = $1 AND envio_estado = 'fallido' AND canal_envio = 'whatsapp' AND NOT anulada`, [String(req.body.cedula)]
+    );
+    return res.json({ success: true, boletas_en_cola: rowCount });
 });
 
 // POST /reintentar-fallidos — devuelve a la cola los clientes con envío fallido
