@@ -47,7 +47,11 @@ const SQL_CLIENTES = `
     GROUP BY cedula`;
 
 const correoValido = (c) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(c || '').trim());
-const primerNombre = (n) => { const p = String(n || '').trim().split(/\s+/)[0] || ''; return p.charAt(0) + p.slice(1).toLowerCase(); };
+// Alegra guarda muchos nombres con el apellido primero ("SALCEDO DE CORTES ALBA"),
+// así que no se puede saber cuál es el nombre de pila: se saluda con el nombre
+// completo en formato título.
+const nombreSaludo = (n) => String(n || '').trim().toLowerCase().split(/\s+/)
+    .map((w) => (['de', 'del', 'la', 'las', 'los', 'y'].includes(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 
 async function enviarACliente(cliente, { prueba, actor }) {
     const destino = prueba ? CORREO_PRUEBA : String(cliente.correo).trim();
@@ -64,7 +68,7 @@ async function enviarACliente(cliente, { prueba, actor }) {
         );
         const info = await enviarCorreoBoletasRifa({
             destinatario: destino,
-            nombre: primerNombre(cliente.nombre),
+            nombre: nombreSaludo(cliente.nombre),
             numeros: cliente.numeros,
             facturas: cliente.facturas,
             adjuntos: imgs.map((b) => ({ filename: `boleta_${String(b.numero).padStart(3, '0')}.jpg`, content: b.imagen, contentType: 'image/jpeg' })),

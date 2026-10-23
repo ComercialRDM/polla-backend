@@ -81,10 +81,11 @@ function listaBoletas(nums) {
     const t = nums.map(fmt);
     return t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} y ${t[t.length - 1]}`;
 }
-function primerNombre(nombre) {
-    const p = String(nombre || '').trim().split(/\s+/)[0] || '';
-    return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
-}
+// Alegra guarda muchos nombres con el apellido primero ("SALCEDO DE CORTES ALBA"),
+// así que no se puede saber cuál es el nombre de pila: se saluda con el nombre
+// completo en formato título.
+const nombreSaludo = (n) => String(n || '').trim().toLowerCase().split(/\s+/)
+    .map((w) => (['de', 'del', 'la', 'las', 'los', 'y'].includes(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 
 // Clientes listos: todas sus boletas de WhatsApp aprobadas, ninguna rechazada,
 // y aún sin enviar. Un cliente = una cédula = un solo mensaje.
@@ -122,7 +123,7 @@ async function suscripcionCancelada(subscriberId) {
 async function enviarPlantilla({ subscriberId, cliente, flowNs }) {
     const campos = await asegurarCampos();
     const valores = {
-        rifa_nombre: primerNombre(cliente.nombre),
+        rifa_nombre: nombreSaludo(cliente.nombre),
         rifa_boletas: listaBoletas(cliente.numeros),
         rifa_cantidad: String(cliente.numeros.length),
         rifa_facturas: cliente.facturas.join(', '),
