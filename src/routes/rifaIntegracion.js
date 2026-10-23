@@ -212,10 +212,12 @@ async function secretoValido(req) {
 // comercial@ (sirve para verificar el correo saliente desde n8n o soporte).
 router.post('/correo-prueba', async (req, res) => {
     if (!(await secretoValido(req))) return res.status(401).json({ success: false });
-    const { enviarACliente, primerClienteParaPrueba } = require('./rifaCorreo');
+    const { enviarACliente, primerClienteParaPrueba, correoValido } = require('./rifaCorreo');
     const cliente = await primerClienteParaPrueba();
     if (!cliente) return res.status(404).json({ success: false, error: 'No hay clientes con correo' });
-    const r = await enviarACliente(cliente, { prueba: true, actor: 'prueba_integracion' });
+    const destinoPrueba = req.body?.destino ? String(req.body.destino).trim() : null;
+    if (destinoPrueba && !correoValido(destinoPrueba)) return res.status(400).json({ success: false, error: 'Correo inválido' });
+    const r = await enviarACliente(cliente, { prueba: true, actor: 'prueba_integracion', destinoPrueba });
     return res.json({ success: r.estado === 'enviado', resultado: r });
 });
 

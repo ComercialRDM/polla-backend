@@ -53,8 +53,8 @@ const correoValido = (c) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(c || '')
 const nombreSaludo = (n) => String(n || '').trim().toLowerCase().split(/\s+/)
     .map((w) => (['de', 'del', 'la', 'las', 'los', 'y'].includes(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 
-async function enviarACliente(cliente, { prueba, actor }) {
-    const destino = prueba ? CORREO_PRUEBA : String(cliente.correo).trim();
+async function enviarACliente(cliente, { prueba, actor, destinoPrueba }) {
+    const destino = prueba ? (destinoPrueba || CORREO_PRUEBA) : String(cliente.correo).trim();
     const token = crypto.randomBytes(24).toString('hex');
     const { rows: [envio] } = await pool.query(
         `INSERT INTO rifa_envios_correo (cedula, correo, numeros, es_prueba, estado, token, actor)
@@ -141,7 +141,10 @@ adminRouter.get('/resumen', async (req, res) => {
 adminRouter.post('/prueba', async (req, res) => {
     const cliente = await primerClienteParaPrueba();
     if (!cliente) return res.status(404).json({ success: false, error: 'No hay clientes con correo y boletas aprobadas' });
-    const r = await enviarACliente(cliente, { prueba: true, actor: req.admin.usuario });
+    // Prueba a otro correo (opcional), p. ej. un Gmail para verificar la entrega fuera de Zoho.
+    const destinoPrueba = req.body?.destino ? String(req.body.destino).trim() : null;
+    if (destinoPrueba && !correoValido(destinoPrueba)) return res.status(400).json({ success: false, error: 'Correo de prueba inválido' });
+    const r = await enviarACliente(cliente, { prueba: true, actor: req.admin.usuario, destinoPrueba });
     return res.json({ success: r.estado === 'enviado', resultado: r, error: r.detalle });
 });
 
@@ -193,4 +196,4 @@ publicRouter.get('/confirmar/:token', async (req, res) => {
         : pagina('Gracias por avisarnos', 'Un asesor de La Retoucherie te contactará para corregir tus datos. También puedes escribirnos por WhatsApp al +57 323 383 3253.'));
 });
 
-module.exports = { adminRouter, publicRouter, enviarACliente, primerClienteParaPrueba };
+module.exports = { adminRouter, publicRouter, enviarACliente, primerClienteParaPrueba, correoValido };
