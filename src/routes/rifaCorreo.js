@@ -123,7 +123,10 @@ adminRouter.get('/resumen', async (req, res) => {
             success: true, correo_prueba: CORREO_PRUEBA,
             clientes_con_correo: rows.length, clientes_listos: listos.length, boletas_listas: listos.reduce((a, c) => a + c.numeros.length, 0),
             sin_correo: sin, por_estado: est, envios,
-            prueba_ok: envios.some((e) => e.es_prueba && e.estado === 'enviado'),
+            // La prueba solo cuenta si se tocó un botón del correo: prueba que llegó de verdad
+            // (Brevo responde "aceptado" aunque luego no lo entregue, p. ej. sin créditos).
+            prueba_ok: envios.some((e) => e.es_prueba && e.estado === 'enviado' && e.respuesta),
+            prueba_pendiente: envios.some((e) => e.es_prueba && e.estado === 'enviado' && !e.respuesta),
         });
     } catch (err) {
         console.error('[rifa-correo] resumen:', err.message);
@@ -139,8 +142,8 @@ adminRouter.post('/prueba', async (req, res) => {
 });
 
 adminRouter.post('/lote', async (req, res) => {
-    const { rows: p } = await pool.query(`SELECT 1 FROM rifa_envios_correo WHERE es_prueba AND estado = 'enviado' LIMIT 1`);
-    if (!p.length) return res.status(409).json({ success: false, error: 'Primero envía la prueba a comercial@ y verifica que llegó bien.' });
+    const { rows: p } = await pool.query(`SELECT 1 FROM rifa_envios_correo WHERE es_prueba AND estado = 'enviado' AND respuesta IS NOT NULL LIMIT 1`);
+    if (!p.length) return res.status(409).json({ success: false, error: 'Abre el correo de prueba en comercial@ y toca uno de sus botones: así se confirma que llegó.' });
     const cantidad = Math.min(Math.max(Number(req.body?.cantidad) || 10, 1), 10);
     const { rows } = await pool.query(SQL_CLIENTES);
     const listos = rows.filter((c) => c.aprobadas && c.sin_enviar).sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
