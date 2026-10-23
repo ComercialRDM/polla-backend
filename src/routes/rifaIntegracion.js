@@ -201,13 +201,26 @@ async function procesarFactura(client, sede, f, res) {
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: true, legacyHeaders: false }));
 
-router.post('/facturas', async (req, res) => {
-    // Secreto compartido con n8n (se ve en /revisionboletas → Envío). Se crea al primer uso.
+// Secreto compartido con n8n (se ve en /revisionboletas → Envío). Se crea al primer uso.
+async function secretoValido(req) {
     const { rows: [s] } = await pool.query(`SELECT valor FROM rifa_config WHERE clave = 'integracion_secret'`);
     const recibido = String(req.get('X-Integracion-Secret') || '');
-    if (!s || recibido.length !== s.valor.length || !crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(s.valor))) {
-        return res.status(401).json({ success: false });
-    }
+    return !!s && recibido.length === s.valor.length && crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(s.valor));
+}
+
+// POST /correo-prueba — envía el correo de boletas de prueba SIEMPRE a
+// comercial@ (sirve para verificar el correo saliente desde n8n o soporte).
+router.post('/correo-prueba', async (req, res) => {
+    if (!(await secretoValido(req))) return res.status(401).json({ success: false });
+    const { enviarACliente, primerClienteParaPrueba } = require('./rifaCorreo');
+    const cliente = await primerClienteParaPrueba();
+    if (!cliente) return res.status(404).json({ success: false, error: 'No hay clientes con correo' });
+    const r = await enviarACliente(cliente, { prueba: true, actor: 'prueba_integracion' });
+    return res.json({ success: r.estado === 'enviado', resultado: r });
+});
+
+router.post('/facturas', async (req, res) => {
+    if (!(await secretoValido(req))) return res.status(401).json({ success: false });
     const sede = SEDES[String(req.body?.sede || '').trim().toLowerCase()];
     if (!sede) return res.status(400).json({ success: false, error: 'sede inválida (Viva, Aranjuez o Buenavista)' });
     const facturas = Array.isArray(req.body?.facturas) ? req.body.facturas.slice(0, 500) : [];

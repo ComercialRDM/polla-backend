@@ -417,4 +417,37 @@ async function diagnosticarCorreo({ enviarA } = {}) {
     return r;
 }
 
-module.exports = { diagnosticarCorreo, enviarCorreoRecuperacionAcceso, enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
+/**
+ * Envía las boletas de la rifa iPhone 18 Pro por correo (clientes sin WhatsApp).
+ * Adjunta cada boleta como imagen y trae botones para confirmar los datos.
+ * Copia oculta a comercial@ salvo en la prueba (que ya va a ese correo).
+ */
+async function enviarCorreoBoletasRifa({ destinatario, nombre, numeros, facturas, adjuntos, linkOk, linkError, esPrueba }) {
+    const transporter = crearTransporter();
+    const lista = numeros.map((n) => `#${String(n).padStart(3, '0')}`).join(', ');
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
+        ${esPrueba ? '<p style="background:#fef3c7;padding:8px 12px;border-radius:8px;font-size:12px;">🧪 PRUEBA — así le llegará el correo al cliente.</p>' : ''}
+        <h1 style="color: #f59e0b; margin-bottom: 4px;">🎟️ Tus boletas para la rifa del iPhone 18 Pro</h1>
+        <p>Hola <strong>${nombre}</strong>,</p>
+        <p>Gracias por tu compra en <strong>La Retoucherie de Manuela</strong>. Tienes <strong>${numeros.length} boleta${numeros.length > 1 ? 's' : ''}</strong>
+           para la rifa del iPhone 18 Pro: <strong>${lista}</strong> (factura ${facturas.join(', ')}).</p>
+        <p>Las encuentras adjuntas a este correo. El sorteo se realizará el <strong>20 de diciembre de 2026</strong>.</p>
+        <p style="margin-top: 24px;">¿Los datos de tus boletas (nombre, cédula, factura y sede) están correctos?</p>
+        <p style="text-align: center; margin: 20px 0;">
+            <a href="${linkOk}" style="background:#22c55e;color:#fff;font-weight:bold;padding:12px 22px;border-radius:999px;text-decoration:none;margin:4px;display:inline-block;">✅ Sí, están correctos</a>
+            <a href="${linkError}" style="background:#ef4444;color:#fff;font-weight:bold;padding:12px 22px;border-radius:999px;text-decoration:none;margin:4px;display:inline-block;">❌ Hay un error</a>
+        </p>
+        <p style="font-size: 12px; color: #71717a;">Si tienes dudas, escríbenos por WhatsApp al +57 323 383 3253.<br>La Retoucherie de Manuela · www.ganaconretoucherie.com</p>
+    </div>`;
+    return transporter.sendMail({
+        from: process.env.MAIL_FROM,
+        to: destinatario,
+        ...(esPrueba ? {} : { bcc: BCC_COMERCIAL }),
+        subject: `${esPrueba ? '[PRUEBA] ' : ''}🎟️ Tus boletas ${lista} · Rifa iPhone 18 Pro · La Retoucherie`,
+        html,
+        attachments: adjuntos,
+    });
+}
+
+module.exports = { enviarCorreoBoletasRifa, diagnosticarCorreo, enviarCorreoRecuperacionAcceso, enviarCorreoBono, enviarCorreoNotificacionVoto, enviarCorreoRecompra, enviarCorreoResultadoPartido, enviarCorreoBackup, enviarCorreoResetPassword, enviarCorreoBonoColWinner, enviarCorreoResetLocalPassword, enviarCorreoChecklist, enviarCorreoOTP };
