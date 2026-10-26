@@ -140,6 +140,44 @@ async function enviarPlantilla({ subscriberId, cliente, flowNs }) {
     if (r?.status !== 'success') throw new Error(`sendFlow: ${JSON.stringify(r)}`);
 }
 
+// Último recurso cuando el contacto ya existe en ManyChat pero no aparece por
+// número (createSubscriber da "Validation error"): se busca por nombre y solo se
+// acepta un contacto cuyo WhatsApp coincida con el celular del cliente. Si se
+// encuentra, se guarda para que los próximos envíos lo usen directo.
+const digitos10 = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+async function buscarPorNombre(cliente, actor) {
+    const cel = digitos10(cliente.celular);
+    if (cel.length !== 10) return null;
+    const palabras = String(cliente.nombre || '').trim().split(/\s+/).filter((w) => w.length >= 3);
+    const consultas = [...new Set([cliente.nombre, nombreSaludo(cliente.nombre), ...palabras.map(nombreSaludo)])];
+    const coincide = (s) => [s?.whatsapp_phone, s?.phone, s?.wa_id,
+        ...(s?.custom_fields || []).filter((f) => f.name === 'whatsapp_id_sync').map((f) => f.value)]
+        .some((v) => digitos10(v) === cel);
+    const vistos = new Set();
+    let consultasInfo = 0;
+    for (const q of consultas) {
+        const r = await manychatRequest(`/fb/subscriber/findByName?name=${encodeURIComponent(q)}`, null, 'GET');
+        for (const s of Array.isArray(r?.data) ? r.data : []) {
+            if (!s?.id || vistos.has(String(s.id))) continue;
+            vistos.add(String(s.id));
+            let ok = coincide(s);
+            if (!ok && consultasInfo < 40) {
+                consultasInfo += 1;
+                ok = coincide((await manychatRequest(`/fb/subscriber/getInfo?subscriber_id=${s.id}`, null, 'GET'))?.data);
+            }
+            if (ok) {
+                await pool.query(
+                    `INSERT INTO rifa_contactos_manychat (celular, subscriber_id, actor) VALUES ($1, $2, $3)
+                     ON CONFLICT (celular) DO UPDATE SET subscriber_id = EXCLUDED.subscriber_id, actor = EXCLUDED.actor, actualizado_en = NOW()`,
+                    [cel, String(s.id), `${actor} (búsqueda por nombre)`]
+                );
+                return String(s.id);
+            }
+        }
+    }
+    return null;
+}
+
 async function asegurarTokens(numeros) {
     for (const n of numeros) {
         await pool.query('UPDATE rifa_boletas SET token_publico = $2 WHERE numero = $1 AND token_publico IS NULL',
@@ -215,6 +253,7 @@ async function enviarACliente(cliente, { flowNs, prueba, actor, tipo = 'boletas'
         }
         let diag = null;
         if (!subscriberId) ({ subscriberId, diagnostico: diag } = await obtenerSubscriberId(cliente.celular));
+        if (!subscriberId) subscriberId = await buscarPorNombre(cliente, actor);
         if (!subscriberId) {
             const motivo = diag?.crear?.message || diag?.crear?.details?.messages?.[0]?.message || '';
             throw new Error(`No se encontró el contacto en ManyChat${motivo ? ` (${String(motivo).slice(0, 160)})` : ''}. Registra su ID de ManyChat en la bitácora.`);
