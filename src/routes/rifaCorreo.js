@@ -35,7 +35,8 @@ pool.query(`
     );
 `).catch((err) => console.error('[rifa-correo] Error migrando:', err.message));
 
-// Clientes con boletas que van por otro medio y tienen correo.
+// Clientes con boletas que van por otro medio, tienen correo y aún no se les envían
+// (si vuelven a comprar, solo cuentan las boletas nuevas).
 const SQL_CLIENTES = `
     SELECT cedula, MIN(nombre) AS nombre, MIN(correo) AS correo,
            ARRAY_AGG(numero ORDER BY numero) AS numeros, ARRAY_AGG(DISTINCT factura) AS facturas,
@@ -44,6 +45,7 @@ const SQL_CLIENTES = `
            MIN(canal_motivo) AS motivo
     FROM rifa_boletas
     WHERE canal_envio = 'otro_medio' AND NOT anulada AND correo IS NOT NULL AND correo <> ''
+          AND correo_estado = 'pendiente'
     GROUP BY cedula`;
 
 const correoValido = (c) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(c || '').trim());

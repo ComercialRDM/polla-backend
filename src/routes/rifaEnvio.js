@@ -90,15 +90,16 @@ function listaBoletas(nums) {
 const nombreSaludo = (n) => String(n || '').trim().toLowerCase().split(/\s+/)
     .map((w) => (['de', 'del', 'la', 'las', 'los', 'y'].includes(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
 
-// Clientes listos: todas sus boletas de WhatsApp aprobadas, ninguna rechazada,
-// y aún sin enviar. Un cliente = una cédula = un solo mensaje.
+// Clientes listos: todas sus boletas de WhatsApp aún sin enviar están aprobadas
+// (ninguna rechazada). Un cliente = una cédula = un solo mensaje con sus boletas
+// nuevas; las que ya recibió antes (si vuelve a comprar) no cuentan.
 const SQL_CLIENTES = `
     SELECT cedula, MIN(nombre) AS nombre, MIN(celular) AS celular,
            ARRAY_AGG(numero ORDER BY numero) AS numeros,
            ARRAY_AGG(DISTINCT factura) AS facturas,
            BOOL_AND(revision_estado = 'aprobada') AS aprobadas,
            BOOL_AND(envio_estado = 'pendiente') AS sin_enviar
-    FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada
+    FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada AND envio_estado = 'pendiente'
     GROUP BY cedula`;
 
 async function asegurarCampos() {
