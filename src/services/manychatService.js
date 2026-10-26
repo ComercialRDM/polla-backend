@@ -57,7 +57,12 @@ let camposCache = null; // array de todos los custom fields, cargado una sola ve
 async function cargarCamposCache() {
     if (!camposCache) {
         const r = await manychatRequest('/fb/page/getCustomFields', null, 'GET');
-        camposCache = r?.data || [];
+        // Solo se guarda una respuesta buena: si ManyChat falla (p. ej. sin plan
+        // Pro), una lista vacía en caché haría creer que no existe ningún campo.
+        if (r?.status !== 'success' || !Array.isArray(r.data)) {
+            throw new Error(`ManyChat getCustomFields: ${String(r?.message || JSON.stringify(r)).slice(0, 200)}`);
+        }
+        camposCache = r.data;
     }
     return camposCache;
 }
