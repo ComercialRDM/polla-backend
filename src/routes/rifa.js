@@ -158,7 +158,7 @@ router.get('/boletas/:numero/imagen', async (req, res) => {
         );
         if (!rows.length) return res.status(404).json({ success: false, error: 'No existe' });
         res.set('Content-Type', rows[0].imagen_mime);
-        res.set('Cache-Control', 'private, max-age=600');
+        res.set('Cache-Control', 'private, no-cache');
         res.set('X-Imagen-Sha256', rows[0].imagen_sha256);
         return res.send(rows[0].imagen);
     } catch (err) {
