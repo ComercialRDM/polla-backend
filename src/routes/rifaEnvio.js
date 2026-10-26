@@ -29,6 +29,8 @@ pool.query(`
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS entregado_en TIMESTAMPTZ;
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS confirmado_en TIMESTAMPTZ;
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS envio_error TEXT;
+    ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS recordatorio_estado VARCHAR(20);
+    ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS recordatorio_en TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS rifa_boletas_token_publico ON rifa_boletas (token_publico);
     CREATE TABLE IF NOT EXISTS rifa_envios (
         id SERIAL PRIMARY KEY,
@@ -53,6 +55,7 @@ pool.query(`
         actor VARCHAR(80),
         actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE rifa_envios ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) NOT NULL DEFAULT 'boletas';
     CREATE TABLE IF NOT EXISTS rifa_config (
         clave VARCHAR(40) PRIMARY KEY,
         valor TEXT NOT NULL,
@@ -159,7 +162,7 @@ adminRouter.get('/resumen', async (req, res) => {
              FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada GROUP BY 1`
         );
         const { rows: ultimos } = await pool.query(
-            `SELECT e.id, e.cedula, e.celular, e.numeros, e.es_prueba, e.estado, e.detalle, e.enviado_en, e.entregado_en,
+            `SELECT e.id, e.tipo, e.cedula, e.celular, e.numeros, e.es_prueba, e.estado, e.detalle, e.enviado_en, e.entregado_en,
                     e.respuesta, e.respondido_en, (SELECT MIN(nombre) FROM rifa_boletas b WHERE b.cedula = e.cedula) AS nombre
              FROM (SELECT DISTINCT ON (cedula, es_prueba) * FROM rifa_envios ORDER BY cedula, es_prueba, creado_en DESC) e
              ORDER BY e.creado_en DESC LIMIT 400`
@@ -194,12 +197,13 @@ adminRouter.post('/config', async (req, res) => {
     return res.json({ success: true });
 });
 
-async function enviarACliente(cliente, { flowNs, prueba, actor }) {
+async function enviarACliente(cliente, { flowNs, prueba, actor, tipo = 'boletas' }) {
+    const esRecordatorio = tipo === 'recordatorio';
     const destinoCel = prueba ? NUMERO_COPIA_CONTROL : cliente.celular;
     let subscriberId = prueba ? SUBSCRIBER_ID_COPIA_CONTROL : null;
     const { rows: [envio] } = await pool.query(
-        `INSERT INTO rifa_envios (cedula, celular, numeros, es_prueba, estado, actor) VALUES ($1, $2, $3, $4, 'enviando', $5) RETURNING id`,
-        [cliente.cedula, destinoCel, cliente.numeros, prueba, actor]
+        `INSERT INTO rifa_envios (cedula, celular, numeros, es_prueba, estado, actor, tipo) VALUES ($1, $2, $3, $4, 'enviando', $5, $6) RETURNING id`,
+        [cliente.cedula, destinoCel, cliente.numeros, prueba, actor, tipo]
     );
     try {
         if (!subscriberId) {
@@ -230,7 +234,13 @@ async function enviarACliente(cliente, { flowNs, prueba, actor }) {
         await asegurarTokens(cliente.numeros);
         await enviarPlantilla({ subscriberId, cliente, flowNs });
         await pool.query(`UPDATE rifa_envios SET estado = 'enviado', enviado_en = NOW() WHERE id = $1`, [envio.id]);
-        if (!prueba) {
+        if (!prueba && esRecordatorio) {
+            await pool.query(`UPDATE rifa_boletas SET recordatorio_estado = 'enviado', recordatorio_en = NOW() WHERE numero = ANY($1::int[])`, [cliente.numeros]);
+            await pool.query(
+                `INSERT INTO rifa_eventos (numero, accion, detalle, actor) SELECT unnest($1::int[]), 'whatsapp_recordatorio', $2, $3`,
+                [cliente.numeros, `Recordatorio enviado a ${cliente.celular}`, actor]
+            );
+        } else if (!prueba) {
             await pool.query(
                 `UPDATE rifa_boletas SET envio_estado = 'enviado', enviado_en = NOW(), envio_error = NULL WHERE numero = ANY($1::int[])`,
                 [cliente.numeros]
@@ -246,7 +256,14 @@ async function enviarACliente(cliente, { flowNs, prueba, actor }) {
         // Si ManyChat/Meta rechaza por suscripción o permiso, pasa a otro medio.
         const esOptOut = /unsubscrib|opt.?in|opt.?out|not subscribed|permission|blocked/i.test(msg);
         await pool.query(`UPDATE rifa_envios SET estado = $2, detalle = $3 WHERE id = $1`, [envio.id, esOptOut ? 'cancelado' : 'fallido', msg]);
-        if (!prueba) {
+        if (!prueba && esRecordatorio) {
+            // El recordatorio fallido no se reintenta solo (máximo uno por cliente).
+            await pool.query(`UPDATE rifa_boletas SET recordatorio_estado = 'fallido', recordatorio_en = NOW() WHERE numero = ANY($1::int[])`, [cliente.numeros]);
+            if (esOptOut) {
+                await pool.query(`UPDATE rifa_boletas SET canal_envio = 'otro_medio', canal_motivo = $2 WHERE cedula = $1`,
+                    [cliente.cedula, 'WhatsApp rechazó el recordatorio (suscripción/permiso)']);
+            }
+        } else if (!prueba) {
             if (esOptOut) {
                 await pool.query(`UPDATE rifa_boletas SET canal_envio = 'otro_medio', canal_motivo = $2 WHERE cedula = $1`,
                     [cliente.cedula, 'WhatsApp rechazó el envío (suscripción/permiso)']);
@@ -289,6 +306,84 @@ adminRouter.post('/lote', async (req, res) => {
     const resultados = [];
     for (const c of listos) {
         resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario })) });
+        await new Promise((r) => setTimeout(r, 1500));
+    }
+    return res.json({ success: true, resultados });
+});
+
+// ── Recordatorio a quienes recibieron el mensaje pero no abrieron sus boletas ──
+// Reglas: solo clientes con TODAS sus boletas en 'enviado' (no tocaron "Ver mis
+// boletas"), 48 h o más después del primer envío, un solo recordatorio por
+// cliente y prueba obligatoria en el número de control.
+const HORAS_RECORDATORIO = 48;
+const SQL_RECORDATORIO = `
+    SELECT cedula, MIN(nombre) AS nombre, MIN(celular) AS celular,
+           ARRAY_AGG(numero ORDER BY numero) AS numeros, ARRAY_AGG(DISTINCT factura) AS facturas,
+           MAX(enviado_en) AS enviado_en
+    FROM rifa_boletas
+    WHERE canal_envio = 'whatsapp' AND NOT anulada
+    GROUP BY cedula
+    HAVING BOOL_AND(envio_estado = 'enviado') AND BOOL_AND(recordatorio_estado IS NULL)`;
+
+async function flowRecordatorio() {
+    return (await config('flow_ns_recordatorio')) || (await config('flow_ns'));
+}
+
+const SQL_PRUEBA_RECORDATORIO_OK = `SELECT 1 FROM rifa_envios WHERE es_prueba AND tipo = 'recordatorio' AND entregado_en IS NOT NULL LIMIT 1`;
+
+adminRouter.get('/recordatorio/resumen', async (req, res) => {
+    const { rows } = await pool.query(SQL_RECORDATORIO);
+    const limite = Date.now() - HORAS_RECORDATORIO * 3600 * 1000;
+    const listos = rows.filter((c) => new Date(c.enviado_en).getTime() <= limite);
+    const { rows: [est] } = await pool.query(
+        `SELECT COUNT(DISTINCT cedula) FILTER (WHERE recordatorio_estado = 'enviado')::int AS enviados,
+                COUNT(DISTINCT cedula) FILTER (WHERE recordatorio_estado = 'fallido')::int AS fallidos,
+                COUNT(DISTINCT cedula) FILTER (WHERE recordatorio_estado IS NOT NULL AND envio_estado IN ('entregado', 'confirmado', 'error_datos'))::int AS abrieron_despues
+         FROM rifa_boletas WHERE canal_envio = 'whatsapp' AND NOT anulada`
+    );
+    const { rows: pr } = await pool.query(SQL_PRUEBA_RECORDATORIO_OK);
+    return res.json({
+        success: true, horas: HORAS_RECORDATORIO,
+        flow_ns_recordatorio: await config('flow_ns_recordatorio'), flow_ns_principal: await config('flow_ns'),
+        listos: listos.length, aun_no_cumplen_48h: rows.length - listos.length, ...est, prueba_ok: pr.length > 0,
+    });
+});
+
+adminRouter.post('/recordatorio/config', async (req, res) => {
+    const flowNs = String(req.body?.flow_ns || '').trim();
+    if (flowNs && !/^content[0-9_]+$/.test(flowNs)) return res.status(400).json({ success: false, error: 'flow_ns inválido' });
+    if (flowNs) {
+        await pool.query(`INSERT INTO rifa_config (clave, valor) VALUES ('flow_ns_recordatorio', $1)
+            ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = NOW()`, [flowNs]);
+    } else {
+        await pool.query(`DELETE FROM rifa_config WHERE clave = 'flow_ns_recordatorio'`);
+    }
+    return res.json({ success: true });
+});
+
+adminRouter.post('/recordatorio/prueba', async (req, res) => {
+    const flowNs = await flowRecordatorio();
+    if (!flowNs) return res.status(409).json({ success: false, error: 'Falta el flow de ManyChat' });
+    const { rows } = await pool.query(SQL_RECORDATORIO);
+    const cliente = rows[0];
+    if (!cliente) return res.status(404).json({ success: false, error: 'No hay clientes pendientes de abrir sus boletas' });
+    const r = await enviarACliente(cliente, { flowNs, prueba: true, actor: req.admin.usuario, tipo: 'recordatorio' });
+    return res.json({ success: r.estado === 'enviado', resultado: r, enviado_a: NUMERO_COPIA_CONTROL, error: r.detalle });
+});
+
+adminRouter.post('/recordatorio/lote', async (req, res) => {
+    const flowNs = await flowRecordatorio();
+    if (!flowNs) return res.status(409).json({ success: false, error: 'Falta el flow de ManyChat' });
+    const { rows: pr } = await pool.query(SQL_PRUEBA_RECORDATORIO_OK);
+    if (!pr.length) return res.status(409).json({ success: false, error: 'Primero haz la prueba del recordatorio en tu número y toca "Ver mis boletas".' });
+    const cantidad = Math.min(Math.max(Number(req.body?.cantidad) || 10, 1), 15);
+    const limite = Date.now() - HORAS_RECORDATORIO * 3600 * 1000;
+    const { rows } = await pool.query(SQL_RECORDATORIO);
+    const listos = rows.filter((c) => new Date(c.enviado_en).getTime() <= limite)
+        .sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
+    const resultados = [];
+    for (const c of listos) {
+        resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario, tipo: 'recordatorio' })) });
         await new Promise((r) => setTimeout(r, 1500));
     }
     return res.json({ success: true, resultados });

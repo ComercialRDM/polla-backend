@@ -130,7 +130,8 @@ async function procesarFactura(client, sede, f, res) {
         return;
     }
     if (!f.fecha || f.fecha < DESDE || f.fecha > HASTA) { await resultado('fuera_de_fechas'); res.ignoradas.push({ numero: f.numero, motivo: 'fuera de fechas' }); return; }
-    if (saldo > 0) { await resultado('pendiente_pago'); res.pendientes_pago += 1; return; }
+    // Solo facturas pagadas: estado 'closed' en Alegra y saldo en cero (un borrador no cuenta).
+    if (saldo > 0 || (estado && estado !== 'closed')) { await resultado('pendiente_pago'); res.pendientes_pago += 1; return; }
 
     const cantidad = Math.floor((total - saldo) / VALOR_BOLETA);
     if (cantidad < 1) { await resultado('menor_100000'); return; }
