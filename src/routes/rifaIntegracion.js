@@ -18,6 +18,10 @@ const { corteDe } = require('../services/rifaCortes');
 // Reglas (acordadas con el negocio):
 // - Participan facturas del 01-oct al 20-dic-2026, PAGADAS (saldo 0): una boleta
 //   por cada $100.000 pagados.
+// - Buenavista: las facturas abiertas (sin pagar en Alegra) TAMBIÉN generan
+//   boleta y siguen el flujo normal de aprobación y envío; la boleta queda
+//   marcada con pago_pendiente (saldo) para que se vea en la revisión, y la
+//   marca se quita sola cuando la factura aparece pagada.
 // - Factura anulada (estado void) o con nota crédito → sus boletas se anulan.
 // - Las boletas nuevas quedan PENDIENTES de aprobación en el corte horario
 //   correspondiente; nada se envía sin aprobación.
@@ -29,6 +33,7 @@ const DESDE = '2026-10-01';
 const HASTA = '2026-12-20';
 const VALOR_BOLETA = 100000;
 const SEDES = { viva: 'Viva', aranjuez: 'Aranjuez', buenavista: 'Buenavista' };
+const SEDES_SIN_ESPERAR_PAGO = new Set(['Buenavista']);
 
 pool.query(`
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS sede_origen VARCHAR(30);
@@ -37,6 +42,7 @@ pool.query(`
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS anulada_en TIMESTAMPTZ;
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS anulada_motivo TEXT;
+    ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS pago_pendiente NUMERIC(14,2);
     CREATE INDEX IF NOT EXISTS rifa_boletas_corte ON rifa_boletas (corte);
     CREATE TABLE IF NOT EXISTS rifa_facturas (
         sede VARCHAR(30) NOT NULL,
@@ -131,9 +137,13 @@ async function procesarFactura(client, sede, f, res) {
     }
     if (!f.fecha || f.fecha < DESDE || f.fecha > HASTA) { await resultado('fuera_de_fechas'); res.ignoradas.push({ numero: f.numero, motivo: 'fuera de fechas' }); return; }
     // Solo facturas pagadas: estado 'closed' en Alegra y saldo en cero (un borrador no cuenta).
-    if (saldo > 0 || (estado && estado !== 'closed')) { await resultado('pendiente_pago'); res.pendientes_pago += 1; return; }
+    // En Buenavista también cuentan las abiertas sin pagar (quedan marcadas).
+    const sinEsperarPago = SEDES_SIN_ESPERAR_PAGO.has(sede) && estado === 'open';
+    const pagada = saldo <= 0 && (!estado || estado === 'closed');
+    if (!pagada && !sinEsperarPago) { await resultado('pendiente_pago'); res.pendientes_pago += 1; return; }
+    const pagoPendiente = !pagada && saldo > 0 ? saldo : null;
 
-    const cantidad = Math.floor((total - saldo) / VALOR_BOLETA);
+    const cantidad = Math.floor((sinEsperarPago ? total : total - saldo) / VALOR_BOLETA);
     if (cantidad < 1) { await resultado('menor_100000'); return; }
 
     const nombre = limpiarNombre(cli.nombre);
@@ -147,6 +157,21 @@ async function procesarFactura(client, sede, f, res) {
         [sede, numDig]
     );
     if (existentes.some((b) => b.anulada)) { await resultado('anulada'); return; }
+
+    // Marca de pago pendiente: se pone mientras la factura esté abierta y se quita al pagarse.
+    const { rowCount: marcadas } = await client.query(
+        `UPDATE rifa_boletas SET pago_pendiente = $3
+         WHERE sede = $1 AND regexp_replace(factura, '\\D', '', 'g') = $2 AND pago_pendiente IS DISTINCT FROM $3`,
+        [sede, numDig, pagoPendiente]
+    );
+    if (marcadas) {
+        for (const b of existentes) {
+            await client.query(`INSERT INTO rifa_eventos (numero, accion, detalle, actor) VALUES ($1, $2, $3, 'integracion_alegra')`,
+                [b.numero, pagoPendiente ? 'pago_pendiente' : 'pago_registrado',
+                    pagoPendiente ? `Factura ${f.numero} sin pagar en Alegra (saldo $${saldo.toLocaleString('es-CO')})` : `Factura ${f.numero} pagada en Alegra`]);
+        }
+    }
+    if (pagoPendiente) res.sin_pago.push(f.numero);
 
     // Actualización de celular en boletas existentes que aún no se han enviado.
     if (celular) {
@@ -186,13 +211,13 @@ async function procesarFactura(client, sede, f, res) {
             const img = await generarBoleta(datos);
             await client.query(
                 `INSERT INTO rifa_boletas (numero, factura, boleta_de_factura, fecha_factura, sede, nombre, cedula, celular, correo,
-                     imagen, imagen_sha256, observacion_auditoria, canal_envio, canal_motivo, origen, corte)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'alegra', $15)`,
+                     imagen, imagen_sha256, observacion_auditoria, canal_envio, canal_motivo, origen, corte, pago_pendiente)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'alegra', $15, $16)`,
                 [siguiente, String(f.numero), k, f.fecha, sede, nombre, cedula, fmtCelular(celular) || null, correo,
-                    img, crypto.createHash('sha256').update(img).digest('hex'), obs, canal, motivo, corte]
+                    img, crypto.createHash('sha256').update(img).digest('hex'), obs, canal, motivo, corte, pagoPendiente]
             );
             await client.query(`INSERT INTO rifa_eventos (numero, accion, detalle, actor) VALUES ($1, 'boleta_creada', $2, 'integracion_alegra')`,
-                [siguiente, `Factura ${sede} ${f.numero} ($${total.toLocaleString('es-CO')}), corte ${corte.toISOString()}`]);
+                [siguiente, `Factura ${sede} ${f.numero} ($${total.toLocaleString('es-CO')})${pagoPendiente ? ', SIN PAGAR en Alegra' : ''}, corte ${corte.toISOString()}`]);
             res.nuevas.push(siguiente);
         }
     }
@@ -229,7 +254,7 @@ router.post('/facturas', async (req, res) => {
     const facturas = Array.isArray(req.body?.facturas) ? req.body.facturas.slice(0, 500) : [];
     const notas = Array.isArray(req.body?.notas_credito) ? req.body.notas_credito.slice(0, 500) : [];
 
-    const resumen = { sede, recibidas: facturas.length, nuevas: [], actualizadas: 0, anuladas: 0, pendientes_pago: 0, ignoradas: [], alertas: [] };
+    const resumen = { sede, recibidas: facturas.length, nuevas: [], actualizadas: 0, anuladas: 0, pendientes_pago: 0, sin_pago: [], ignoradas: [], alertas: [] };
     const client = await pool.connect();
     try {
         // Un solo proceso a la vez asigna números (evita números repetidos).

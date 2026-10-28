@@ -76,7 +76,7 @@ router.use(rifaLimiter, rifaAuth);
 
 const CAMPOS_LISTA = `numero, factura, boleta_de_factura, to_char(fecha_factura, 'YYYY-MM-DD') AS fecha_factura,
     sede, nombre, cedula, celular, correo, imagen_sha256, observacion_auditoria,
-    revision_estado, revision_nota, revisado_por, revisado_en, canal_envio, canal_motivo, envio_estado`;
+    revision_estado, revision_nota, revisado_por, revisado_en, canal_envio, canal_motivo, envio_estado, pago_pendiente`;
 
 // Los lotes de revisión agrupan de a 10, en orden de número, SOLO las boletas
 // que salen por WhatsApp. Las de "otro medio" (sin celular o canceló la
