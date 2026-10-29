@@ -18,7 +18,7 @@ const { corteDe } = require('../services/rifaCortes');
 // Reglas (acordadas con el negocio):
 // - Participan facturas del 01-oct al 20-dic-2026, PAGADAS (saldo 0): una boleta
 //   por cada $100.000 pagados.
-// - Buenavista: las facturas abiertas (sin pagar en Alegra) TAMBIÉN generan
+// - Las 3 sedes: las facturas abiertas (sin pagar en Alegra) TAMBIÉN generan
 //   boleta y siguen el flujo normal de aprobación y envío; la boleta queda
 //   marcada con pago_pendiente (saldo) para que se vea en la revisión, y la
 //   marca se quita sola cuando la factura aparece pagada.
@@ -33,7 +33,7 @@ const DESDE = '2026-10-01';
 const HASTA = '2026-12-20';
 const VALOR_BOLETA = 100000;
 const SEDES = { viva: 'Viva', aranjuez: 'Aranjuez', buenavista: 'Buenavista' };
-const SEDES_SIN_ESPERAR_PAGO = new Set(['Buenavista']);
+const SEDES_SIN_ESPERAR_PAGO = new Set(['Viva', 'Aranjuez', 'Buenavista']);
 
 pool.query(`
     ALTER TABLE rifa_boletas ADD COLUMN IF NOT EXISTS sede_origen VARCHAR(30);
@@ -137,7 +137,7 @@ async function procesarFactura(client, sede, f, res) {
     }
     if (!f.fecha || f.fecha < DESDE || f.fecha > HASTA) { await resultado('fuera_de_fechas'); res.ignoradas.push({ numero: f.numero, motivo: 'fuera de fechas' }); return; }
     // Solo facturas pagadas: estado 'closed' en Alegra y saldo en cero (un borrador no cuenta).
-    // En Buenavista también cuentan las abiertas sin pagar (quedan marcadas).
+    // En las sedes de SEDES_SIN_ESPERAR_PAGO también cuentan las abiertas sin pagar (quedan marcadas).
     const sinEsperarPago = SEDES_SIN_ESPERAR_PAGO.has(sede) && estado === 'open';
     const pagada = saldo <= 0 && (!estado || estado === 'closed');
     if (!pagada && !sinEsperarPago) { await resultado('pendiente_pago'); res.pendientes_pago += 1; return; }
