@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const rifaAuth = require('../middleware/rifaAuth');
 const { enviarCorreoBoletasRifa } = require('../services/emailService');
+const { BLOQUEOS, conBloqueo } = require('../utils/bloqueo');
 
 // Envío de boletas por CORREO a los clientes que no reciben por WhatsApp (sin
 // celular o que cancelaron la suscripción) y sí tienen correo.
@@ -154,14 +155,19 @@ adminRouter.post('/lote', async (req, res) => {
     const { rows: p } = await pool.query(`SELECT 1 FROM rifa_envios_correo WHERE es_prueba AND estado = 'enviado' AND respuesta IS NOT NULL LIMIT 1`);
     if (!p.length) return res.status(409).json({ success: false, error: 'Abre el correo de prueba en comercial@ y toca uno de sus botones: así se confirma que llegó.' });
     const cantidad = Math.min(Math.max(Number(req.body?.cantidad) || 10, 1), 10);
-    const { rows } = await pool.query(SQL_CLIENTES);
-    const listos = rows.filter((c) => c.aprobadas && c.sin_enviar).sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
-    const resultados = [];
-    for (const c of listos) {
-        resultados.push(await enviarACliente(c, { prueba: false, actor: req.admin.usuario }));
-        await new Promise((r) => setTimeout(r, 1200));
-    }
-    return res.json({ success: true, resultados });
+    // Un solo lote de correo a la vez (evita que un cliente reciba dos correos).
+    const lote = await conBloqueo(BLOQUEOS.ENVIO_CORREO, async () => {
+        const { rows } = await pool.query(SQL_CLIENTES);
+        const listos = rows.filter((c) => c.aprobadas && c.sin_enviar).sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
+        const resultados = [];
+        for (const c of listos) {
+            resultados.push(await enviarACliente(c, { prueba: false, actor: req.admin.usuario }));
+            await new Promise((r) => setTimeout(r, 1200));
+        }
+        return resultados;
+    });
+    if (lote.ocupado) return res.status(409).json({ success: false, error: 'Ya hay un envío por correo en curso. Espera a que termine.' });
+    return res.json({ success: true, resultados: lote.valor });
 });
 
 adminRouter.post('/reintentar-fallidos', async (req, res) => {

@@ -34,6 +34,13 @@ const ALERTAS = {
         ventanaMs: 5 * 60 * 1000,
         descripcionBase: 'Firma inválida en webhooks de Wompi — posible ataque',
     },
+    RIFA_SECRETO_INVALIDO: {
+        nivel: 5,
+        componente: 'Seguridad / Rifa',
+        umbral: 3,
+        ventanaMs: 5 * 60 * 1000,
+        descripcionBase: 'Secreto inválido en la integración o el webhook de la rifa — posible ataque',
+    },
     AUTH_FUERZA_BRUTA: {
         nivel: 5,
         componente: 'Seguridad / Auth',

@@ -4,6 +4,8 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const { generarBoleta } = require('../services/rifaBoletaImagen');
 const { corteDe } = require('../services/rifaCortes');
+const { registrarEvento: registrarAlerta } = require('../services/alertaService');
+const { obtenerIp } = require('../utils/request');
 
 // Recepción automática de facturas de Alegra (las 3 sedes) enviadas por n8n.
 //
@@ -115,8 +117,10 @@ async function procesarFactura(client, sede, f, res) {
     const numDig = digitos(f.numero);
     if (!numDig) { res.ignoradas.push({ numero: f.numero, motivo: 'sin número' }); return; }
     const cli = f.cliente || {};
-    const total = Number(f.total) || 0;
-    const saldo = Number(f.saldo) || 0;
+    // Montos acotados: un saldo negativo o mayor que el total inflaría la
+    // cantidad de boletas (total - saldo).
+    const total = Math.max(0, Number(f.total) || 0);
+    const saldo = Math.min(total, Math.max(0, Number(f.saldo) || 0));
     const estado = String(f.estado || '').toLowerCase();
 
     await client.query(
@@ -231,7 +235,13 @@ router.use(rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: true, le
 async function secretoValido(req) {
     const { rows: [s] } = await pool.query(`SELECT valor FROM rifa_config WHERE clave = 'integracion_secret'`);
     const recibido = String(req.get('X-Integracion-Secret') || '');
-    return !!s && recibido.length === s.valor.length && crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(s.valor));
+    const ok = !!s && recibido.length === s.valor.length && crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(s.valor));
+    if (!ok) {
+        const ip = obtenerIp(req);
+        console.warn(`[rifa-seguridad] Secreto inválido en ${req.originalUrl} · IP ${ip} · UA ${String(req.get('User-Agent') || '').slice(0, 200)}`);
+        registrarAlerta('RIFA_SECRETO_INVALIDO', { ip, descripcion: `Secreto inválido en integración Alegra desde ${ip}` });
+    }
+    return ok;
 }
 
 // POST /correo-prueba — envía el correo de boletas de prueba SIEMPRE a

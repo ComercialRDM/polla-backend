@@ -3,6 +3,9 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const rifaAuth = require('../middleware/rifaAuth');
+const { BLOQUEOS, conBloqueo } = require('../utils/bloqueo');
+const { registrarEvento: registrarAlerta } = require('../services/alertaService');
+const { obtenerIp } = require('../utils/request');
 const {
     manychatRequest, cargarCamposCache, obtenerSubscriberId, SUBSCRIBER_ID_COPIA_CONTROL, NUMERO_COPIA_CONTROL,
 } = require('../services/manychatService');
@@ -340,15 +343,21 @@ adminRouter.post('/lote', async (req, res) => {
         return res.status(409).json({ success: false, error: 'Antes de enviar a clientes, haz una prueba a tu número y toca "Ver mis boletas" para comprobar que llegan.' });
     }
     const cantidad = Math.min(Math.max(Number(req.body?.cantidad) || 10, 1), 15);
-    const { rows } = await pool.query(SQL_CLIENTES);
-    const listos = rows.filter((c) => c.aprobadas && c.sin_enviar)
-        .sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
-    const resultados = [];
-    for (const c of listos) {
-        resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario })) });
-        await new Promise((r) => setTimeout(r, 1500));
-    }
-    return res.json({ success: true, resultados });
+    // Un solo lote de WhatsApp a la vez: dos lotes simultáneos (dos pestañas o
+    // dos personas) leerían los mismos clientes y les llegaría el mensaje dos veces.
+    const lote = await conBloqueo(BLOQUEOS.ENVIO_WHATSAPP, async () => {
+        const { rows } = await pool.query(SQL_CLIENTES);
+        const listos = rows.filter((c) => c.aprobadas && c.sin_enviar)
+            .sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
+        const resultados = [];
+        for (const c of listos) {
+            resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario })) });
+            await new Promise((r) => setTimeout(r, 1500));
+        }
+        return resultados;
+    });
+    if (lote.ocupado) return res.status(409).json({ success: false, error: 'Ya hay un envío por WhatsApp en curso. Espera a que termine.' });
+    return res.json({ success: true, resultados: lote.valor });
 });
 
 // ── Recordatorio a quienes recibieron el mensaje pero no abrieron sus boletas ──
@@ -418,15 +427,19 @@ adminRouter.post('/recordatorio/lote', async (req, res) => {
     if (!pr.length) return res.status(409).json({ success: false, error: 'Primero haz la prueba del recordatorio en tu número y toca "Ver mis boletas".' });
     const cantidad = Math.min(Math.max(Number(req.body?.cantidad) || 10, 1), 15);
     const limite = Date.now() - HORAS_RECORDATORIO * 3600 * 1000;
-    const { rows } = await pool.query(SQL_RECORDATORIO);
-    const listos = rows.filter((c) => new Date(c.enviado_en).getTime() <= limite)
-        .sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
-    const resultados = [];
-    for (const c of listos) {
-        resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario, tipo: 'recordatorio' })) });
-        await new Promise((r) => setTimeout(r, 1500));
-    }
-    return res.json({ success: true, resultados });
+    const lote = await conBloqueo(BLOQUEOS.ENVIO_WHATSAPP, async () => {
+        const { rows } = await pool.query(SQL_RECORDATORIO);
+        const listos = rows.filter((c) => new Date(c.enviado_en).getTime() <= limite)
+            .sort((a, b) => a.numeros[0] - b.numeros[0]).slice(0, cantidad);
+        const resultados = [];
+        for (const c of listos) {
+            resultados.push({ nombre: c.nombre, numeros: c.numeros, ...(await enviarACliente(c, { flowNs, prueba: false, actor: req.admin.usuario, tipo: 'recordatorio' })) });
+            await new Promise((r) => setTimeout(r, 1500));
+        }
+        return resultados;
+    });
+    if (lote.ocupado) return res.status(409).json({ success: false, error: 'Ya hay un envío por WhatsApp en curso. Espera a que termine.' });
+    return res.json({ success: true, resultados: lote.valor });
 });
 
 // POST /contacto-manychat — body: { cedula, subscriber_id }. Registra a mano el
@@ -480,6 +493,9 @@ async function verificarSecreto(req, res, next) {
     const s = await secretoWebhook();
     const recibido = String(req.get('X-Rifa-Secret') || req.body?.secret || '');
     if (recibido.length !== s.length || !crypto.timingSafeEqual(Buffer.from(recibido), Buffer.from(s))) {
+        const ip = obtenerIp(req);
+        console.warn(`[rifa-seguridad] Secreto inválido en ${req.originalUrl} · IP ${ip} · UA ${String(req.get('User-Agent') || '').slice(0, 200)}`);
+        registrarAlerta('RIFA_SECRETO_INVALIDO', { ip, descripcion: `Secreto inválido en webhook de WhatsApp desde ${ip}` });
         return res.status(401).json({ success: false });
     }
     return next();
