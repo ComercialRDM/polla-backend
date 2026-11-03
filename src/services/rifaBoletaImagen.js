@@ -1,9 +1,10 @@
 const path = require('path');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 
-// Generador de la boleta de la rifa iPhone 18 Pro. Es el mismo diseño y las
-// mismas coordenadas del generador original (rifa-iphone/generar_boletas.py),
-// sobre la plantilla de 1536x1024.
+// Generador de la boleta de la rifa iPhone 18 Pro, sobre plantillas de 1536x1024.
+// El diseño depende de la fecha de la FACTURA (no del día de envío): hasta el
+// 31-oct-2026 Halloween (mismas coordenadas del generador original,
+// rifa-iphone/generar_boletas.py); desde el 1-nov-2026 Navidad.
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets', 'rifa');
 GlobalFonts.registerFromPath(path.join(ASSETS, 'BebasNeue-Regular.ttf'), 'RifaBebas');
@@ -12,20 +13,57 @@ GlobalFonts.registerFromPath(path.join(ASSETS, 'Oswald-SemiBold.ttf'), 'RifaOswa
 const TINTA = 'rgb(24,24,27)';
 const ROJO = 'rgb(220,20,30)';
 
-const CAMPOS = {
-    factura: [1001, 117, 1498, 161],
-    nombre: [1001, 212, 1498, 261],
-    cedula: [1001, 314, 1480, 361],
-    celular: [1001, 545, 1484, 591],
-};
-const SEDES = {
-    buenavista: [1002, 424, 1049, 474],
-    viva: [1187, 424, 1234, 474],
-    aranjuez: [1328, 425, 1375, 474],
-};
-const NUMEROS = [[1363, 47, 1498, 96], [1363, 678, 1491, 725]];
+const INICIO_NAVIDAD = '2026-11-01';
 
-let plantilla = null;
+const DISENOS = {
+    halloween: {
+        archivo: 'boleta_plantilla.png',
+        campos: {
+            factura: [1001, 117, 1498, 161],
+            nombre: [1001, 212, 1498, 261],
+            cedula: [1001, 314, 1480, 361],
+            celular: [1001, 545, 1484, 591],
+        },
+        sedes: {
+            buenavista: [1002, 424, 1049, 474],
+            viva: [1187, 424, 1234, 474],
+            aranjuez: [1328, 425, 1375, 474],
+        },
+        numeros: [[1363, 47, 1498, 96], [1363, 678, 1491, 725]],
+    },
+    navidad: {
+        archivo: 'boleta_plantilla_navidad.png',
+        campos: {
+            factura: [984, 122, 1479, 167],
+            nombre: [984, 216, 1479, 265],
+            cedula: [984, 320, 1479, 369],
+            celular: [984, 546, 1479, 595],
+        },
+        sedes: {
+            buenavista: [984, 432, 1033, 483],
+            viva: [1170, 432, 1219, 483],
+            aranjuez: [1322, 432, 1369, 483],
+        },
+        numeros: [[1338, 48, 1479, 97], [1342, 680, 1479, 729]],
+    },
+};
+
+const plantillas = {};
+
+// Fecha de la factura como 'AAAA-MM-DD'. pg entrega las columnas DATE como Date
+// a medianoche local; sin fecha se toma el día de hoy en Colombia.
+function fechaISO(fecha) {
+    if (fecha instanceof Date) {
+        const p = (n) => String(n).padStart(2, '0');
+        return `${fecha.getFullYear()}-${p(fecha.getMonth() + 1)}-${p(fecha.getDate())}`;
+    }
+    if (fecha) return String(fecha).slice(0, 10);
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+}
+
+function disenoPara(fecha) {
+    return fechaISO(fecha) >= INICIO_NAVIDAD ? 'navidad' : 'halloween';
+}
 
 function textoEnCaja(ctx, caja, texto, tamMax = 32, padding = 16) {
     const [x0, y0, x1, y1] = caja;
@@ -75,22 +113,25 @@ function numeroEnCaja(ctx, caja, numero) {
 }
 
 /**
- * @param {{ numero:number, factura:string, nombre:string, cedula:string, celular?:string, sede:string }} b
+ * @param {{ numero:number, factura:string, nombre:string, cedula:string, celular?:string, sede:string,
+ *           fecha_factura?:Date|string }} b
  * @returns {Promise<Buffer>} JPEG
  */
 async function generarBoleta(b) {
-    if (!plantilla) plantilla = await loadImage(path.join(ASSETS, 'boleta_plantilla.png'));
+    const d = DISENOS[disenoPara(b.fecha_factura)];
+    if (!plantillas[d.archivo]) plantillas[d.archivo] = await loadImage(path.join(ASSETS, d.archivo));
+    const plantilla = plantillas[d.archivo];
     const canvas = createCanvas(plantilla.width, plantilla.height);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(plantilla, 0, 0);
-    for (const caja of NUMEROS) numeroEnCaja(ctx, caja, b.numero);
-    textoEnCaja(ctx, CAMPOS.factura, String(b.factura));
-    textoEnCaja(ctx, CAMPOS.nombre, String(b.nombre).toUpperCase());
-    textoEnCaja(ctx, CAMPOS.cedula, String(b.cedula));
-    textoEnCaja(ctx, CAMPOS.celular, String(b.celular || ''));
-    const sede = SEDES[String(b.sede || '').trim().toLowerCase()];
+    for (const caja of d.numeros) numeroEnCaja(ctx, caja, b.numero);
+    textoEnCaja(ctx, d.campos.factura, String(b.factura));
+    textoEnCaja(ctx, d.campos.nombre, String(b.nombre).toUpperCase());
+    textoEnCaja(ctx, d.campos.cedula, String(b.cedula));
+    textoEnCaja(ctx, d.campos.celular, String(b.celular || ''));
+    const sede = d.sedes[String(b.sede || '').trim().toLowerCase()];
     if (sede) marcarSede(ctx, sede);
     return canvas.encode('jpeg', 90);
 }
 
-module.exports = { generarBoleta };
+module.exports = { generarBoleta, disenoPara };

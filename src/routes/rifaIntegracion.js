@@ -211,7 +211,7 @@ async function procesarFactura(client, sede, f, res) {
         const corte = corteDe();
         for (let k = existentes.length + 1; k <= cantidad; k += 1) {
             const { rows: [{ siguiente }] } = await client.query('SELECT COALESCE(MAX(numero), 0) + 1 AS siguiente FROM rifa_boletas');
-            const datos = { numero: siguiente, factura: String(f.numero), nombre, cedula, celular: fmtCelular(celular), sede };
+            const datos = { numero: siguiente, factura: String(f.numero), nombre, cedula, celular: fmtCelular(celular), sede, fecha_factura: f.fecha };
             const img = await generarBoleta(datos);
             await client.query(
                 `INSERT INTO rifa_boletas (numero, factura, boleta_de_factura, fecha_factura, sede, nombre, cedula, celular, correo,
