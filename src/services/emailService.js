@@ -418,7 +418,7 @@ async function diagnosticarCorreo({ enviarA } = {}) {
 }
 
 /**
- * Envía las boletas de la rifa iPhone 18 Pro por correo (clientes sin WhatsApp).
+ * Envía las boletas del sorteo iPhone 18 Pro por correo (clientes sin WhatsApp).
  * Adjunta cada boleta como imagen y trae botones para confirmar los datos.
  * Copia oculta a comercial@ salvo en la prueba (que ya va a ese correo).
  */
@@ -428,11 +428,11 @@ async function enviarCorreoBoletasRifa({ destinatario, nombre, numeros, facturas
     const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #18181b;">
         ${esPrueba ? '<p style="background:#fef3c7;padding:8px 12px;border-radius:8px;font-size:12px;">🧪 PRUEBA — así le llegará el correo al cliente.</p>' : ''}
-        <h1 style="color: #f59e0b; margin-bottom: 4px;">🎟️ Tus boletas para la rifa del iPhone 18 Pro</h1>
+        <h1 style="color: #f59e0b; margin-bottom: 4px;">🎟️ Tus boletas para el sorteo del iPhone 18 Pro</h1>
         <p>Hola <strong>${nombre}</strong>,</p>
         <p>Gracias por tu compra en <strong>La Retoucherie de Manuela</strong>. Tienes <strong>${numeros.length} boleta${numeros.length > 1 ? 's' : ''}</strong>
-           para la rifa del iPhone 18 Pro: <strong>${lista}</strong> (factura ${facturas.join(', ')}).</p>
-        <p>Las encuentras adjuntas a este correo. El sorteo se realizará el <strong>20 de diciembre de 2026</strong>.</p>
+           para el sorteo del iPhone 18 Pro: <strong>${lista}</strong> (factura ${facturas.join(', ')}).</p>
+        <p>Las encuentras adjuntas a este correo. El sorteo se realizará el <strong>lunes 21 de diciembre de 2026</strong>.</p>
         <p style="margin-top: 24px;">¿Los datos de tus boletas (nombre, cédula, factura y sede) están correctos?</p>
         <p style="text-align: center; margin: 20px 0;">
             <a href="${linkOk}" style="background:#22c55e;color:#fff;font-weight:bold;padding:12px 22px;border-radius:999px;text-decoration:none;margin:4px;display:inline-block;">✅ Sí, están correctos</a>
@@ -444,7 +444,7 @@ async function enviarCorreoBoletasRifa({ destinatario, nombre, numeros, facturas
         from: process.env.MAIL_FROM,
         to: destinatario,
         ...(esPrueba ? {} : { bcc: BCC_COMERCIAL }),
-        subject: `${esPrueba ? '[PRUEBA] ' : ''}🎟️ Tus boletas ${lista} · Rifa iPhone 18 Pro · La Retoucherie`,
+        subject: `${esPrueba ? '[PRUEBA] ' : ''}🎟️ Tus boletas ${lista} · Sorteo iPhone 18 Pro · La Retoucherie`,
         html,
         attachments: adjuntos,
     });
